@@ -1,0 +1,152 @@
+<view class="settings-page">
+  <view class="section intro">
+    <text class="page-title">模型服务</text>
+    <text class="intro-copy">当前档案：{{profileName}}</text>
+  </view>
+
+  <view class="section">
+    <text class="section-title">服务档案</text>
+    <picker mode="selector" range="{{profileNames}}" value="{{profileIndex}}" bindchange="selectProfile">
+      <view class="picker-row"><text>{{profileName}}</text><text class="picker-arrow">›</text></view>
+    </picker>
+    <view class="inline-actions profile-actions">
+      <button class="small-button" bindtap="createProfile">新建</button>
+      <button class="small-button" bindtap="renameProfile">改名</button>
+      <button class="small-button danger" bindtap="deleteProfile">删除</button>
+    </view>
+  </view>
+
+  <view class="section">
+    <text class="section-title">连接</text>
+    <label class="field">
+      <text class="field-label">服务 URL</text>
+      <input class="field-input" value="{{baseUrl}}" data-field="baseUrl" bindinput="onFieldInput" placeholder="https://example.com/v1" maxlength="500" />
+    </label>
+    <label class="field">
+      <text class="field-label">API Key</text>
+      <input class="field-input" value="{{apiKey}}" data-field="apiKey" bindinput="onFieldInput" placeholder="sk-..." password="{{keyMasked}}" maxlength="1000" />
+    </label>
+    <view class="toggle-row">
+      <text>显示 API Key</text>
+      <switch checked="{{!keyMasked}}" color="#17a673" bindchange="toggleKey" />
+    </view>
+    <view class="toggle-row cloud-toggle">
+      <view class="toggle-copy">
+        <text>使用微信云开发中转</text>
+        <text class="toggle-help">无需配置模型服务域名</text>
+      </view>
+      <switch checked="{{useCloudProxy}}" color="#17a673" bindchange="toggleCloudProxy" />
+    </view>
+    <button class="secondary-button" loading="{{fetching}}" disabled="{{fetching}}" bindtap="fetchModels">
+      {{fetching ? '正在获取模型' : '获取模型列表'}}
+    </button>
+    <text class="status-text {{modelStatusError ? 'error' : ''}}">{{modelStatus}}</text>
+  </view>
+
+  <view class="section">
+    <text class="section-title">模型</text>
+    <label class="field">
+      <text class="field-label">对话模型</text>
+      <input class="field-input" value="{{chatModel}}" data-field="chatModel" bindinput="onFieldInput" placeholder="填写模型 ID" maxlength="300" />
+    </label>
+    <picker wx:if="{{chatModels.length}}" mode="selector" range="{{chatModels}}" bindchange="selectChatModel">
+      <view class="picker-row"><text>从 {{chatModels.length}} 个对话模型中选择</text><text class="picker-arrow">›</text></view>
+    </picker>
+    <label class="field model-field">
+      <text class="field-label">生图模型（可选）</text>
+      <input class="field-input" value="{{imageModel}}" data-field="imageModel" bindinput="onFieldInput" placeholder="填写生图模型 ID" maxlength="300" />
+    </label>
+    <picker wx:if="{{imageModels.length}}" mode="selector" range="{{imageModels}}" bindchange="selectImageModel">
+      <view class="picker-row"><text>从 {{imageModels.length}} 个生图模型中选择</text><text class="picker-arrow">›</text></view>
+    </picker>
+  </view>
+
+  <view class="section">
+    <text class="section-title">Edge TTS 朗读</text>
+    <view class="toggle-row">
+      <text>自动朗读模型回答</text>
+      <switch checked="{{autoSpeak}}" color="#3478f6" bindchange="toggleAutoSpeak" />
+    </view>
+    <picker mode="selector" range="{{ttsVoiceNames}}" value="{{ttsVoiceIndex}}" bindchange="selectTtsVoice">
+      <view class="picker-row"><text>{{ttsVoiceNames[ttsVoiceIndex]}}</text><text class="picker-arrow">›</text></view>
+    </picker>
+    <text class="voice-id">{{ttsVoice}}</text>
+    <button class="secondary-button voice-button" loading="{{fetchingVoices}}" disabled="{{fetchingVoices}}" bindtap="fetchTtsVoices">
+      {{fetchingVoices ? '正在获取人声' : '刷新全部 Edge TTS 人声'}}
+    </button>
+    <view class="slider-field">
+      <view class="slider-heading"><text>语速</text><text>{{ttsRate}}%</text></view>
+      <slider min="-100" max="200" step="10" value="{{ttsRate}}" color="#d9dddf" selected-color="#17a673" data-field="ttsRate" bindchange="onSliderChange" />
+    </view>
+    <view class="slider-field">
+      <view class="slider-heading"><text>音量</text><text>{{ttsVolume}}%</text></view>
+      <slider min="-100" max="100" step="10" value="{{ttsVolume}}" color="#d9dddf" selected-color="#17a673" data-field="ttsVolume" bindchange="onSliderChange" />
+    </view>
+    <view class="slider-field">
+      <view class="slider-heading"><text>音调</text><text>{{ttsPitch}}Hz</text></view>
+      <slider min="-100" max="100" step="10" value="{{ttsPitch}}" color="#d9dddf" selected-color="#17a673" data-field="ttsPitch" bindchange="onSliderChange" />
+    </view>
+    <view class="tts-preview">
+      <button class="preview-button" bindtap="previewTtsVoice">{{ttsPreviewState === 'idle' ? '音色试听' : '停止试听'}}</button>
+      <text class="preview-help">使用当前音色和参数，无需先保存或填写 API Key。</text>
+    </view>
+    <text wx:if="{{ttsPreviewStatus}}" class="preview-status {{ttsPreviewError ? 'error' : ''}}">{{ttsPreviewStatus}}</text>
+  </view>
+
+  <view class="section">
+    <text class="section-title">费用估算（美元）</text>
+    <view class="price-grid">
+      <label class="field">
+        <text class="field-label">输入 / 百万 Token</text>
+        <input class="field-input" type="digit" value="{{inputPrice}}" data-field="inputPrice" bindinput="onFieldInput" />
+      </label>
+      <label class="field">
+        <text class="field-label">输出 / 百万 Token</text>
+        <input class="field-input" type="digit" value="{{outputPrice}}" data-field="outputPrice" bindinput="onFieldInput" />
+      </label>
+      <label class="field">
+        <text class="field-label">每张图片</text>
+        <input class="field-input" type="digit" value="{{imagePrice}}" data-field="imagePrice" bindinput="onFieldInput" />
+      </label>
+    </view>
+  </view>
+
+  <view class="section">
+    <view class="section-heading-row">
+      <text class="section-title no-margin">本机用量</text>
+      <button class="small-button" bindtap="resetUsage">清除</button>
+    </view>
+    <view class="usage-grid">
+      <view class="usage-item"><text class="usage-value">{{usage.requests}}</text><text class="usage-label">请求</text></view>
+      <view class="usage-item"><text class="usage-value">{{usage.totalTokens}}</text><text class="usage-label">Token</text></view>
+      <view class="usage-item"><text class="usage-value">{{usage.imageCount}}</text><text class="usage-label">图片</text></view>
+      <view class="usage-item"><text class="usage-value">{{usage.estimatedCostText}}</text><text class="usage-label">估算费用</text></view>
+    </view>
+  </view>
+
+  <view class="section">
+    <text class="section-title">对话行为</text>
+    <label class="field">
+      <text class="field-label">系统提示词</text>
+      <textarea class="prompt-input" value="{{systemPrompt}}" data-field="systemPrompt" bindinput="onFieldInput" placeholder="定义助手的角色与回答方式" maxlength="8000" auto-height />
+    </label>
+  </view>
+
+  <view class="section release-note">
+    <text class="section-title">发布须知</text>
+    <text class="note-text" wx:if="{{useCloudProxy}}">云开发模式无需配置模型、图片和 TTS 服务域名；对话完整返回，生图受云函数 60 秒上限限制。更新后必须重新部署中转云函数并在云端安装依赖。</text>
+    <text class="note-text" wx:else>直连模式支持对话流式显示和最长 10 分钟生图，但模型及图片域名必须加入小程序合法域名；Edge TTS 仍通过云函数调用。</text>
+  </view>
+
+  <view class="section about-section">
+    <text class="section-title">关于 NING</text>
+    <view class="version-row">
+      <text>当前版本</text>
+      <text class="version-value">3.4.3</text>
+    </view>
+  </view>
+
+  <view class="save-bar">
+    <button class="primary-button" bindtap="save">保存并返回</button>
+  </view>
+</view>

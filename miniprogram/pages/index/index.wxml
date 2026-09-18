@@ -1,0 +1,122 @@
+<view class="page" style="{{pageHeightStyle}}">
+  <view class="topbar">
+    <view class="identity">
+      <view class="brand-mark">N</view>
+      <view class="identity-copy">
+        <text class="brand">NING</text>
+        <text class="model-name">{{profileName}} · {{mode === 'chat' ? chatModel : imageModel}}</text>
+      </view>
+    </view>
+    <view class="topbar-actions">
+      <button class="icon-button top-icon" aria-label="会话历史" bindtap="openHistory">
+        <image src="/imgs/chat-bubble-history.svg" mode="aspectFit" />
+      </button>
+      <button class="icon-button top-icon" aria-label="新建对话" bindtap="newConversation">
+        <image src="/imgs/chat-add.svg" mode="aspectFit" />
+      </button>
+      <button class="icon-button top-icon {{autoSpeak ? 'active' : ''}}" aria-label="自动朗读" bindtap="toggleAutoSpeak">
+        <image src="{{autoSpeak ? '/imgs/sound-on.svg' : '/imgs/sound-off.svg'}}" mode="aspectFit" />
+      </button>
+      <button class="icon-button top-icon" aria-label="设置" bindtap="openSettings">
+        <image src="/imgs/gear.svg" mode="aspectFit" />
+      </button>
+    </view>
+  </view>
+
+  <view class="mode-switch">
+    <view class="mode-option {{mode === 'chat' ? 'active' : ''}}" data-mode="chat" bindtap="changeMode">对话</view>
+    <view class="mode-option {{mode === 'image' ? 'active' : ''}}" data-mode="image" bindtap="changeMode">生图</view>
+  </view>
+
+  <view wx:if="{{mode === 'image'}}" class="image-controls">
+    <picker mode="selector" range="{{imageSizes}}" value="{{imageSizeIndex}}" bindchange="selectImageSize">
+      <view class="control-chip">{{imageSizes[imageSizeIndex]}}</view>
+    </picker>
+    <picker mode="selector" range="{{imageQualities}}" value="{{imageQualityIndex}}" bindchange="selectImageQuality">
+      <view class="control-chip">{{imageQualities[imageQualityIndex]}}</view>
+    </picker>
+    <picker mode="selector" range="{{imageStyles}}" value="{{imageStyleIndex}}" bindchange="selectImageStyle">
+      <view class="control-chip">{{imageStyles[imageStyleIndex]}}</view>
+    </picker>
+    <scroll-view class="template-scroll" scroll-x show-scrollbar="{{false}}">
+      <view class="template-row">
+        <button wx:for="{{imageTemplates}}" wx:key="name" class="template-chip" data-index="{{index}}" bindtap="applyImageTemplate">{{item.name}}</button>
+      </view>
+    </scroll-view>
+  </view>
+
+  <scroll-view class="conversation" scroll-y enhanced show-scrollbar="{{false}}" scroll-into-view="{{scrollTarget}}">
+    <view wx:if="{{!messages.length}}" class="empty-state">
+      <view class="empty-symbol">N</view>
+      <text class="empty-title">{{configured ? '开始一段新对话' : '连接你的模型服务'}}</text>
+      <text class="empty-copy" wx:if="{{configured}}">可以输入文字或图片，也可以切换到生图模式。</text>
+      <button wx:else class="primary-button compact" bindtap="openSettings">前往设置</button>
+    </view>
+
+    <block wx:for="{{messages}}" wx:key="id">
+      <view id="message-{{item.id}}" class="message-row {{item.role}}">
+        <view class="message-label">{{item.role === 'user' ? '你' : 'NING'}}</view>
+        <view class="message-content {{item.error ? 'error' : ''}}" data-content="{{item.content}}" bindlongpress="copyMessage">
+          <image wx:if="{{item.attachment}}" class="attached-image" src="{{item.attachment.previewUrl || item.attachment.fileId || item.attachment.localPath}}" mode="aspectFill" data-url="{{item.attachment.previewUrl || item.attachment.fileId || item.attachment.localPath}}" bindtap="previewImage" />
+          <markdown-preview wx:if="{{item.content && item.role === 'assistant'}}" markdown="{{item.content}}" fontSize="30" />
+          <text wx:elif="{{item.content}}" user-select>{{item.content}}</text>
+          <view wx:if="{{item.pending && !item.content}}" class="loading-line">
+            <view class="loading-dot"></view><view class="loading-dot"></view><view class="loading-dot"></view>
+            <text>{{item.type === 'image' ? '正在生成图片' : '正在思考'}}</text>
+          </view>
+          <image wx:if="{{item.imageUrl}}" class="generated-image" src="{{item.imageUrl}}" mode="widthFix" data-url="{{item.imageUrl}}" bindtap="previewImage" />
+          <text wx:if="{{item.type === 'image' && item.prompt}}" class="image-prompt" user-select>{{item.prompt}}</text>
+        </view>
+        <view wx:if="{{!item.pending}}" class="message-footer">
+          <text class="meta">{{item.meta}}</text>
+          <view class="message-actions">
+            <button wx:if="{{item.role === 'user'}}" class="mini-action copy-action" data-id="{{item.id}}" bindtap="editMessage">编辑</button>
+            <button wx:if="{{item.role === 'assistant'}}" class="mini-action copy-action" data-id="{{item.id}}" bindtap="regenerateMessage">重试</button>
+            <button wx:if="{{item.role === 'assistant' && item.content && !item.error}}" class="mini-action copy-action" data-content="{{item.content}}" bindtap="speakMessage">{{speaking ? '停止' : '朗读'}}</button>
+            <button wx:if="{{item.role === 'assistant' && item.content}}" class="mini-action copy-action" data-content="{{item.content}}" bindtap="copyMessage">复制</button>
+            <button wx:if="{{item.imageUrl}}" class="mini-action save-action" data-url="{{item.imageUrl}}" bindtap="saveImage">保存图片</button>
+          </view>
+        </view>
+      </view>
+    </block>
+    <view id="page-bottom" class="page-bottom"></view>
+  </scroll-view>
+
+  <view class="composer-wrap">
+    <view wx:if="{{attachment}}" class="attachment-preview">
+      <image src="{{attachment.previewUrl || attachment.localPath}}" mode="aspectFill" />
+      <button class="remove-attachment" aria-label="移除图片" bindtap="removeAttachment">×</button>
+    </view>
+    <view wx:if="{{preparingAttachment}}" class="composer-status">
+      正在处理图片
+    </view>
+    <view class="composer">
+      <button wx:if="{{mode === 'chat'}}" class="composer-tool" aria-label="添加图片" bindtap="chooseImage" disabled="{{busy}}">
+        <image src="/imgs/image-attach.svg" mode="aspectFit" />
+      </button>
+      <textarea
+        class="message-input"
+        value="{{inputValue}}"
+        placeholder="{{placeholder}}"
+        maxlength="12000"
+        auto-height
+        fixed
+        confirm-type="send"
+        confirm-hold="{{false}}"
+        bindinput="onInput"
+        bindconfirm="send"
+        bindkeyboardheightchange="onKeyboardHeightChange"
+        adjust-position="{{false}}"
+        cursor-spacing="12"
+        disabled="{{busy}}"
+      />
+      <button wx:if="{{busy}}" class="send-button stop-button" aria-label="停止生成" bindtap="stop">
+        <image src="/imgs/stop.svg" mode="aspectFit" />
+      </button>
+      <button wx:else class="send-button {{inputValue || attachment ? 'ready' : ''}}" aria-label="发送" bindtap="send" disabled="{{!inputValue && !attachment}}">
+        <image src="/imgs/send.svg" mode="aspectFit" />
+      </button>
+    </view>
+    <text class="domain-hint" wx:if="{{!configured}}">云开发模式经云端安全转发，API Key 不会写入云端数据库。</text>
+  </view>
+</view>

@@ -1,0 +1,10 @@
+{
+  "name": "openai-proxy",
+  "version": "3.4.3",
+  "private": true,
+  "main": "index.js",
+  "dependencies": {
+    "ws": "^8.18.3",
+    "wx-server-sdk": "^4.0.2"
+  }
+}

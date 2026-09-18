@@ -1,0 +1,7 @@
+{
+  "navigationBarTitleText": "NING",
+  "disableScroll": true,
+  "usingComponents": {
+    "markdown-preview": "/components/markdown-preview/index"
+  }
+}

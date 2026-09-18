@@ -1,0 +1,12 @@
+{
+  "envId": "cloudbase-d2gg15kzjf02a74ab",
+  "functionRoot": "./cloudfunctions",
+  "functions": [
+    {
+      "name": "openaiProxy",
+      "handler": "index.main",
+      "timeout": 60,
+      "installDependency": true
+    }
+  ]
+}

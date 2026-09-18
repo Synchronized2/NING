@@ -1,0 +1,25 @@
+<view class="history-page">
+  <view class="history-toolbar">
+    <input class="search-input" value="{{query}}" placeholder="搜索会话" confirm-type="search" bindinput="onSearch" />
+    <button class="new-button" bindtap="newConversation">新建</button>
+  </view>
+
+  <view wx:if="{{!filtered.length}}" class="empty-history">
+    <text class="empty-title">{{query ? '没有匹配的会话' : '还没有会话记录'}}</text>
+  </view>
+
+  <view wx:for="{{filtered}}" wx:key="id" class="history-row {{item.id === activeId ? 'active' : ''}}">
+    <view class="history-main" data-id="{{item.id}}" bindtap="openConversation">
+      <view class="history-heading">
+        <text class="history-title">{{item.title}}</text>
+        <text class="history-time">{{item.timeText}}</text>
+      </view>
+      <text class="history-preview">{{item.preview}}</text>
+      <text class="history-count">{{item.messageCount}} 条消息{{item.id === activeId ? ' · 当前会话' : ''}}</text>
+    </view>
+    <view class="history-actions">
+      <button class="row-action" data-id="{{item.id}}" bindtap="renameConversation">改名</button>
+      <button class="row-action danger" data-id="{{item.id}}" bindtap="deleteConversation">删除</button>
+    </view>
+  </view>
+</view>

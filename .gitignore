@@ -1,0 +1,21 @@
+# Dependencies and generated package output
+node_modules/
+miniprogram_npm/
+.npm-cache/
+dist/
+build/
+coverage/
+*.zip
+
+# Local configuration and secrets
+.env
+.env.*
+!.env.example
+project.private.config.json
+
+# IDE, OS, and logs
+.vscode/
+.idea/
+*.log
+.DS_Store
+Thumbs.db
