@@ -1,6 +1,7 @@
 const {
   createChatCompletion,
   createImage,
+  isCodexOnlyClientError,
   materializeImage,
   parseImageToolCall,
   prepareImageAttachment,
@@ -10,6 +11,7 @@ const {
   createConversation,
   getActiveConversationId,
   getConversation,
+  getImageService,
   getSettings,
   isChatConfigured,
   isImageConfigured,
@@ -17,6 +19,7 @@ const {
   saveConversation,
   saveSettings,
 } = require("../../utils/storage");
+const { createWebRtcVad, UtteranceCollector, transcribeWav, startPcmCapture, FRAME_BYTES } = require("../../utils/voice");
 
 const IMAGE_TOOL = {
   type: "function",
@@ -36,6 +39,8 @@ const TOOL_GUIDANCE = "当用户明确要求生成、绘制或创作图片时，
 const IMAGE_SIZES = ["1024x1024", "1024x1536", "1536x1024"];
 const IMAGE_QUALITIES = ["standard", "hd"];
 const IMAGE_STYLES = ["vivid", "natural"];
+const TTS_PREFETCH_LIMIT = 3;
+const TTS_MIN_CHARS = 15;
 const IMAGE_TEMPLATES = [
   { name: "摄影", prompt: "专业摄影作品，自然光线，真实材质，构图清晰：" },
   { name: "插画", prompt: "精致数字插画，色彩协调，细节丰富：" },
@@ -63,6 +68,40 @@ function cleanSpeechText(value) {
     .replace(/\s+/g, " ")
     .trim()
     .slice(0, 5000);
+}
+
+function takeSpeechChunks(value, final = false) {
+  const source = String(value || "");
+  const chunks = [];
+  const boundary = /[。！？!?；;\n]+/g;
+  let start = 0;
+  let pending = "";
+  let match;
+  while ((match = boundary.exec(source))) {
+    const text = cleanSpeechText(source.slice(start, boundary.lastIndex));
+    if (text) {
+      pending += text;
+      if (pending.replace(/[，。！？!?；;：:、\s]/g, "").length >= TTS_MIN_CHARS) {
+        chunks.push(pending);
+        pending = "";
+      }
+    }
+    start = boundary.lastIndex;
+  }
+  let rest = pending + source.slice(start);
+  if (final && rest.trim()) {
+    const text = cleanSpeechText(rest);
+    if (text) chunks.push(text);
+    rest = "";
+  }
+  return { chunks, rest };
+}
+
+function stageExcerpt(value) {
+  const text = cleanSpeechText(value);
+  if (!text) return "";
+  const parsed = takeSpeechChunks(text, true);
+  return parsed.chunks.slice(0, 2).join("");
 }
 
 function normalizedUsage(value) {
@@ -117,6 +156,18 @@ Page({
     preparingAttachment: false,
     autoSpeak: false,
     speaking: false,
+    avatarEnabled: true,
+    avatarState: "idle",
+    avatarReady: false,
+    avatarFailed: false,
+    stageMessage: null,
+    stageUserMessage: null,
+    stageDisplayText: "",
+    stageAnswerVisible: false,
+    stageScrollTarget: "stage-reply-bottom",
+    interactiveTextInput: false,
+    voiceStatus: "idle",
+    keyboardVisible: false,
     imageSizes: IMAGE_SIZES,
     imageQualities: IMAGE_QUALITIES,
     imageStyles: IMAGE_STYLES,
@@ -130,7 +181,8 @@ Page({
     this._keyboardHeight = 0;
     this._windowHeight = currentWindowHeight();
     this._activeConversationId = getActiveConversationId();
-    this.setData({ messages: getConversation() });
+    const messages = getConversation();
+    this.setData({ messages, ...this.latestStageTurn(messages) });
     this.refreshPageHeight();
   },
 
@@ -141,6 +193,7 @@ Page({
 
   onShow() {
     this._keyboardHeight = 0;
+    this.setData({ keyboardVisible: false });
     this.refreshPageHeight();
     this.scheduleLayoutRefresh();
     const settings = getSettings();
@@ -152,6 +205,7 @@ Page({
       imageModel: settings.imageModel || "未配置生图模型",
       profileName: settings.profileName || "模型服务",
       autoSpeak: settings.autoSpeak,
+      avatarEnabled: settings.avatarEnabled,
       imageSizeIndex: Math.max(0, IMAGE_SIZES.indexOf(settings.imageSize)),
       imageQualityIndex: Math.max(0, IMAGE_QUALITIES.indexOf(settings.imageQuality)),
       imageStyleIndex: Math.max(0, IMAGE_STYLES.indexOf(settings.imageStyle)),
@@ -159,12 +213,15 @@ Page({
     if (!this.data.busy && activeId !== this._activeConversationId) {
       this._activeConversationId = activeId;
       updates.messages = getConversation();
+      Object.assign(updates, this.latestStageTurn(updates.messages));
     }
     this.setData(updates);
+    if (!settings.avatarEnabled) this.stopVoiceCapture();
   },
 
   onHide() {
     this._keyboardHeight = 0;
+    this.stopVoiceCapture();
   },
 
   onResize(event) {
@@ -178,6 +235,7 @@ Page({
     this._unloaded = true;
     this.abortActiveRequest();
     this.stopSpeech();
+    this.stopVoiceCapture();
     if (this._updateTimer) clearTimeout(this._updateTimer);
     if (this._layoutTimer) clearTimeout(this._layoutTimer);
   },
@@ -218,11 +276,194 @@ Page({
   changeMode(event) {
     if (this.data.busy) return;
     const mode = event.currentTarget.dataset.mode;
+    if (mode !== "chat") this.stopVoiceCapture();
     this.setData({
       mode,
       attachment: mode === "image" ? null : this.data.attachment,
       placeholder: mode === "image" ? "描述你想生成的图片" : "输入消息",
     });
+  },
+
+  latestStageMessage(messages) {
+    for (let index = messages.length - 1; index >= 0; index -= 1) {
+      if (messages[index].role === "assistant" && messages[index].sourceMode !== "image") return messages[index];
+    }
+    return null;
+  },
+
+  latestStageTurn(messages) {
+    const stageMessage = this.latestStageMessage(messages);
+    if (!stageMessage) return { stageMessage: null, stageUserMessage: null, stageDisplayText: "", stageAnswerVisible: false };
+    const assistantIndex = messages.findIndex((item) => item.id === stageMessage.id);
+    let stageUserMessage = null;
+    for (let index = assistantIndex - 1; index >= 0; index -= 1) {
+      const item = messages[index];
+      if (item.role === "user" && item.sourceMode !== "image") {
+        stageUserMessage = item;
+        break;
+      }
+    }
+    return {
+      stageMessage,
+      stageUserMessage,
+      stageAnswerVisible: !stageMessage.pending,
+      stageDisplayText: stageMessage.pending && !stageMessage.content
+        ? "正在思考…"
+        : stageExcerpt(stageMessage.content),
+    };
+  },
+
+  setStageDisplayText(stageDisplayText, stageAnswerVisible = true) {
+    if (this._unloaded) return;
+    const stageScrollTarget = this.data.stageScrollTarget === "stage-reply-bottom"
+      ? "stage-reply-bottom-alt"
+      : "stage-reply-bottom";
+    this.setData({ stageDisplayText, stageAnswerVisible, stageScrollTarget });
+  },
+
+  toggleInteractiveInput() {
+    if (this._voiceSession) this.stopVoiceCapture();
+    this.setData({ interactiveTextInput: !this.data.interactiveTextInput });
+  },
+
+  onInteractiveAudioAction() {
+    if (this.data.busy) return this.stop();
+    if (this.data.speaking) return this.stopSpeech();
+    const message = this.data.stageMessage;
+    if (message && message.content && !message.error) {
+      const session = this.startInteractiveSpeech(getSettings());
+      this.finishInteractiveSpeech(session, message.content);
+    }
+  },
+
+  async toggleVoiceCapture() {
+    if (this._voiceSession) return this.finishVoiceCapture();
+    if (this.data.busy) return;
+    if (!isChatConfigured(getSettings())) return this.openSettings();
+    this.stopSpeech();
+    const session = { collector: new UtteranceCollector(), pending: new Uint8Array(0), stopped: false };
+    this._voiceSession = session;
+    this.setData({ voiceStatus: "loading" });
+    try {
+      session.vad = await createWebRtcVad();
+      if (this._voiceSession !== session) { session.vad.destroy(); return; }
+      session.capture = startPcmCapture({
+        onFrame: ({ frameBuffer }) => {
+        if (this._voiceSession !== session || session.stopped) return;
+        try {
+          const incoming = new Uint8Array(frameBuffer);
+          const merged = new Uint8Array(session.pending.length + incoming.length);
+          merged.set(session.pending);
+          merged.set(incoming, session.pending.length);
+          let offset = 0;
+          while (offset + FRAME_BYTES <= merged.length) {
+            const frame = merged.slice(offset, offset + FRAME_BYTES);
+            offset += FRAME_BYTES;
+            const state = session.collector.add(frame, session.vad.isSpeech(frame));
+            if (state === "started") this.setData({ voiceStatus: "recording" });
+            if (state === "complete" || state === "timeout") {
+              session.stopped = true;
+              session.completed = state === "complete";
+              session.capture.stop();
+              break;
+            }
+          }
+          session.pending = merged.slice(offset);
+        } catch (error) { this.failVoiceCapture(session, error); }
+        },
+        onStop: ({ tempFilePath }) => {
+        this.releaseRecorder(session);
+        if (tempFilePath) this.deleteVoiceFile(tempFilePath);
+        if (this._voiceSession !== session) return;
+        if (!session.completed) {
+          this.failVoiceCapture(session, new Error("未检测到语音，请重试"));
+          return;
+        }
+        this.transcribeVoice(session);
+        },
+        onError: (error) => this.failVoiceCapture(session, new Error(error.errMsg || "麦克风录音失败")),
+      });
+      session.timer = setTimeout(() => this.failVoiceCapture(session, new Error("录音超时，请重试")), 51000);
+      this.setData({ voiceStatus: "listening" });
+    } catch (error) { this.failVoiceCapture(session, error); }
+  },
+
+  finishVoiceCapture() {
+    const session = this._voiceSession;
+    if (!session || session.stopped) return;
+    if (!session.capture) {
+      this.stopVoiceCapture();
+      return;
+    }
+    session.stopped = true;
+    session.completed = session.collector.completeManually();
+    this.setData({ voiceStatus: "stopping" });
+    session.capture.stop();
+  },
+
+  releaseRecorder(session) {
+    if (session.timer) clearTimeout(session.timer);
+    session.timer = null;
+    session.capture = null;
+    if (session.vad) { session.vad.destroy(); session.vad = null; }
+  },
+
+  deleteVoiceFile(filePath) {
+    try { wx.getFileSystemManager().unlink({ filePath, fail() {} }); } catch (_) {}
+  },
+
+  stopVoiceCapture() {
+    const session = this._voiceSession;
+    this._voiceSession = null;
+    if (!session) return;
+    if (session.upload) session.upload.abort();
+    if (session.capture) {
+      try { session.capture.cancel(); } catch (_) {}
+    }
+    this.releaseRecorder(session);
+    if (session.filePath) this.deleteVoiceFile(session.filePath);
+    if (!this._unloaded) this.setData({ voiceStatus: "idle" });
+  },
+
+  failVoiceCapture(session, error) {
+    if (this._voiceSession !== session) return;
+    this.stopVoiceCapture();
+    const message = error.message || "语音识别失败";
+    if (/合法域名/.test(message)) wx.showModal({ title: "语音上传失败", content: message, showCancel: false });
+    else wx.showToast({ title: message, icon: "none", duration: 3500 });
+  },
+
+  async transcribeVoice(session) {
+    this.setData({ voiceStatus: "recognizing" });
+    const filePath = `${wx.env.USER_DATA_PATH}/ning-voice-${Date.now()}.wav`;
+    session.filePath = filePath;
+    try {
+      const wav = session.collector.toWav();
+      await new Promise((resolve, reject) => wx.getFileSystemManager().writeFile({
+        filePath, data: wav, success: resolve, fail: reject,
+      }));
+      if (this._voiceSession !== session) return;
+      session.upload = transcribeWav(filePath);
+      const text = await session.upload.promise;
+      if (this._voiceSession !== session) return;
+      this.stopVoiceCapture();
+      this.setData({ inputValue: text }, () => this.send());
+    } catch (error) { this.failVoiceCapture(session, error); }
+    finally { if (this._voiceSession !== session) this.deleteVoiceFile(filePath); }
+  },
+
+  onAvatarInteract() {
+    if (this.data.busy) return;
+    wx.vibrateShort({ type: "light", fail() {} });
+  },
+
+  onAvatarReady() {
+    this.setData({ avatarReady: true, avatarFailed: false });
+  },
+
+  onAvatarError(event) {
+    this.setData({ avatarReady: false, avatarFailed: true });
+    console.warn("Live2D avatar unavailable", event && event.detail);
   },
 
   onInput(event) {
@@ -232,6 +473,7 @@ Page({
   onKeyboardHeightChange(event) {
     const keyboardHeight = Math.max(0, Number(event.detail.height) || 0);
     this._keyboardHeight = keyboardHeight;
+    this.setData({ keyboardVisible: keyboardHeight > 0 });
     this.refreshPageHeight();
     if (keyboardHeight && this.data.messages.length) this.scrollToBottom(this.data.messages[this.data.messages.length - 1].id);
   },
@@ -314,7 +556,7 @@ Page({
 
   appendMessages(items) {
     const messages = this.data.messages.concat(items);
-    this.setData({ messages }, () => this.scrollToBottom(items[items.length - 1].id));
+    this.setData({ messages, ...this.latestStageTurn(messages) }, () => this.scrollToBottom(items[items.length - 1].id));
     saveConversation(messages);
     this._activeConversationId = getActiveConversationId();
   },
@@ -324,6 +566,10 @@ Page({
     if (index < 0) return;
     const updates = {};
     Object.keys(patch).forEach((key) => { updates[`messages[${index}].${key}`] = patch[key]; });
+    if (this.data.stageMessage && this.data.stageMessage.id === id) {
+      updates.stageMessage = { ...this.data.stageMessage, ...patch };
+      updates.stageScrollTarget = this.data.stageScrollTarget === "stage-reply-bottom" ? "stage-reply-bottom-alt" : "stage-reply-bottom";
+    }
     this.setData(updates, () => {
       if (persist) saveConversation(this.data.messages);
       this.scrollToBottom(id);
@@ -331,8 +577,16 @@ Page({
     });
   },
 
-  scrollToBottom(id) {
-    this.setData({ scrollTarget: `message-${id}` });
+  scrollToBottom() {
+    if (this._unloaded) return;
+    // A changed anchor makes WeChat scroll again while the same answer grows.
+    const scrollTarget = this.data.scrollTarget === "page-bottom" ? "page-bottom-alt" : "page-bottom";
+    this.setData({ scrollTarget });
+  },
+
+  onMessageRendered(event) {
+    const last = this.data.messages[this.data.messages.length - 1];
+    if (last && event.currentTarget.dataset.id === last.id) this.scrollToBottom();
   },
 
   apiMessages() {
@@ -363,28 +617,29 @@ Page({
   async runChat(settings, assistantId) {
     const startedAt = Date.now();
     let streamedText = "";
+    const interactiveSpeech = this.data.avatarEnabled
+      ? this.startInteractiveSpeech(settings)
+      : null;
     const messages = [];
     if (settings.systemPrompt) messages.push({ role: "system", content: settings.systemPrompt });
     if (isImageConfigured(settings)) messages.push({ role: "system", content: TOOL_GUIDANCE });
     messages.push(...this.apiMessages());
     const onDelta = (delta) => {
       streamedText += delta;
+      if (this.data.avatarState !== "answering") this.setData({ avatarState: "answering" });
       this.scheduleStreamUpdate(assistantId, streamedText);
+      if (interactiveSpeech) this.queueInteractiveSpeech(interactiveSpeech, delta);
     };
     let speechText = "";
+    this.setData({ avatarState: "thinking" });
     try {
-      let result;
-      try {
-        result = await this.performChatRequest(settings, messages, onDelta, true);
-      } catch (error) {
-        if (error.statusCode !== 400 || settings.useCloudProxy || !isImageConfigured(settings) || error.aborted) throw error;
-        streamedText = "";
-        this.flushStreamUpdate(assistantId, "");
-        result = await this.performChatRequest(settings, messages, onDelta, false);
-      }
+      const result = await this.performCompatibleChatRequest(
+        settings, messages, onDelta, isImageConfigured(settings),
+      );
       const imageCall = result.toolCalls.map(parseImageToolCall).find(Boolean);
       if (imageCall) {
         this.flushStreamUpdate(assistantId, streamedText);
+        if (interactiveSpeech) this.finishInteractiveSpeech(interactiveSpeech, streamedText);
         await this.runImage(settings, imageCall.prompt, assistantId, streamedText, startedAt);
         return;
       }
@@ -397,24 +652,62 @@ Page({
         error: !finalText,
         meta: [settings.chatModel, elapsedText(startedAt), usage.text].filter(Boolean).join(" · "),
       });
-      speechText = finalText;
+      if (interactiveSpeech) this.finishInteractiveSpeech(interactiveSpeech, finalText);
+      else speechText = finalText;
     } catch (error) {
+      if (interactiveSpeech && this._speechSession === interactiveSpeech) this.stopSpeech();
       this.handleRequestError(assistantId, error, streamedText, settings.chatModel, startedAt);
+      if (this.data.avatarEnabled) this.setStageDisplayText(streamedText || (error && error.message) || "请求失败，请稍后重试。");
     } finally {
       this._activeRequest = null;
-      this.setData({ busy: false });
+      const isStillSpeaking = interactiveSpeech && this._speechSession === interactiveSpeech;
+      this.setData({ busy: false, avatarState: isStillSpeaking ? "answering" : "idle" });
       if (speechText && settings.autoSpeak) this.speakText(speechText, settings);
     }
   },
 
-  performChatRequest(settings, messages, onDelta, includeTools) {
+  async performCompatibleChatRequest(settings, messages, onDelta, includeTools) {
+    const transports = [settings.useCloudProxy, !settings.useCloudProxy];
+    let primaryError = null;
+    for (let index = 0; index < transports.length; index += 1) {
+      const useCloudProxy = transports[index];
+      try {
+        return await this.performChatRequest(settings, messages, onDelta, includeTools, useCloudProxy);
+      } catch (error) {
+        if (error.aborted) throw error;
+        if (isCodexOnlyClientError(error)) throw error;
+        let currentError = error;
+        if (includeTools && Number(error.statusCode) === 400) {
+          try {
+            return await this.performChatRequest(settings, messages, onDelta, false, useCloudProxy);
+          } catch (retryError) {
+            if (retryError.aborted) throw retryError;
+            currentError = retryError;
+          }
+        }
+        if (isCodexOnlyClientError(currentError)) throw currentError;
+        if (index === 0 && Number(currentError.statusCode) === 403) {
+          primaryError = currentError;
+          continue;
+        }
+        if (primaryError) {
+          primaryError.message = `${primaryError.message}；备用${useCloudProxy ? "云中转" : "直连"}通道也不可用：${currentError.message}`;
+          throw primaryError;
+        }
+        throw currentError;
+      }
+    }
+    throw primaryError;
+  },
+
+  performChatRequest(settings, messages, onDelta, includeTools, useCloudProxy = settings.useCloudProxy) {
     const operation = createChatCompletion({
       baseUrl: settings.baseUrl,
       apiKey: settings.apiKey,
       model: settings.chatModel,
       messages,
       tools: includeTools && isImageConfigured(settings) ? [IMAGE_TOOL] : [],
-      useCloudProxy: settings.useCloudProxy,
+      useCloudProxy,
       onDelta,
     });
     this._activeRequest = operation;
@@ -442,9 +735,10 @@ Page({
   async runImage(settings, prompt, assistantId, existingText = "", startedAt = Date.now()) {
     this.updateMessage(assistantId, { type: "image", prompt, content: existingText, pending: true, error: false });
     try {
+      const imageService = getImageService(settings);
       const operation = createImage({
-        baseUrl: settings.baseUrl,
-        apiKey: settings.apiKey,
+        baseUrl: imageService.baseUrl,
+        apiKey: imageService.apiKey,
         model: settings.imageModel,
         prompt,
         size: IMAGE_SIZES[this.data.imageSizeIndex],
@@ -496,7 +790,7 @@ Page({
       sourceMode: userMessage.sourceMode, content: "", prompt: userMessage.content, pending: true, error: false, meta: "",
     };
     const messages = this.data.messages.slice(0, assistantIndex).concat(assistant);
-    this.setData({ messages, busy: true, mode: userMessage.sourceMode || "chat" });
+    this.setData({ messages, ...this.latestStageTurn(messages), busy: true, mode: userMessage.sourceMode || "chat" });
     saveConversation(messages);
     if (userMessage.sourceMode === "image") await this.runImage(settings, userMessage.content, assistant.id);
     else await this.runChat(settings, assistant.id);
@@ -516,7 +810,7 @@ Page({
         const content = String(result.content || "").trim();
         if (!result.confirm || !content) return;
         const messages = this.data.messages.slice(0, index);
-        this.setData({ messages, inputValue: content, attachment: message.attachment || null, mode: message.sourceMode || "chat" }, () => this.send());
+        this.setData({ messages, ...this.latestStageTurn(messages), inputValue: content, attachment: message.attachment || null, mode: message.sourceMode || "chat" }, () => this.send());
         saveConversation(messages);
       },
     });
@@ -555,6 +849,10 @@ Page({
   },
 
   toggleAutoSpeak() {
+    if (this.data.avatarEnabled && this.data.mode === "chat") {
+      wx.showToast({ title: "互动形象模式默认开启朗读", icon: "none" });
+      return;
+    }
     const settings = getSettings();
     const autoSpeak = !settings.autoSpeak;
     saveSettings({ ...settings, autoSpeak });
@@ -567,6 +865,177 @@ Page({
     const content = event.currentTarget.dataset.content;
     if (this.data.speaking) return this.stopSpeech();
     if (content) this.speakText(content, getSettings());
+  },
+
+  startInteractiveSpeech(settings) {
+    this.stopSpeech();
+    const session = {
+      interactive: true,
+      settings,
+      buffer: "",
+      queue: [],
+      ready: [],
+      preparing: [],
+      activeJob: null,
+      nextJobIndex: 0,
+      nextPlayIndex: 0,
+      generating: true,
+      playing: false,
+      receivedText: false,
+    };
+    this._speechSession = session;
+    this.setData({ speaking: true });
+    this.setStageDisplayText("正在思考…", false);
+    return session;
+  },
+
+  queueInteractiveSpeech(session, delta) {
+    if (this._speechSession !== session || !delta) return;
+    session.receivedText = true;
+    const parsed = takeSpeechChunks(session.buffer + delta);
+    session.buffer = parsed.rest;
+    session.queue.push(...parsed.chunks);
+    this.pumpInteractiveSynthesis(session);
+  },
+
+  finishInteractiveSpeech(session, finalText) {
+    if (this._speechSession !== session) return;
+    if (!session.receivedText && finalText) session.buffer += finalText;
+    const parsed = takeSpeechChunks(session.buffer, true);
+    session.buffer = parsed.rest;
+    session.queue.push(...parsed.chunks);
+    session.generating = false;
+    this.pumpInteractiveSynthesis(session);
+    this.pumpInteractivePlayback(session);
+  },
+
+  pumpInteractiveSynthesis(session) {
+    if (this._speechSession !== session) return;
+    while (session.queue.length && session.preparing.length + session.ready.length < TTS_PREFETCH_LIMIT) {
+      const job = { index: session.nextJobIndex++, text: session.queue.shift() };
+      session.preparing.push(job);
+      this.prepareInteractiveSpeechChunk(session, job);
+    }
+  },
+
+  async prepareInteractiveSpeechChunk(session, job) {
+    try {
+      job.request = synthesizeSpeech({
+        text: job.text,
+        voice: session.settings.ttsVoice,
+        rate: session.settings.ttsRate,
+        volume: session.settings.ttsVolume,
+        pitch: session.settings.ttsPitch,
+      });
+      const result = await job.request.promise;
+      job.request = null;
+      job.fileId = result.fileId;
+      job.localPath = result.localPath;
+      if (this._speechSession !== session) {
+        this.releaseSpeechSession(job);
+        return;
+      }
+      if (!job.localPath && job.fileId) {
+        const downloaded = await new Promise((resolve, reject) => {
+          job.download = wx.cloud.downloadFile({
+            fileID: job.fileId,
+            success: resolve,
+            fail: (error) => reject(new Error(`朗读音频下载失败：${error.errMsg || "请稍后重试"}`)),
+          });
+        });
+        job.download = null;
+        job.localPath = downloaded.tempFilePath;
+      }
+      if (this._speechSession !== session) {
+        this.releaseSpeechSession(job);
+        return;
+      }
+      if (!job.localPath) throw new Error("无法读取朗读音频");
+      session.preparing.splice(session.preparing.indexOf(job), 1);
+      session.ready.push(job);
+      this.pumpInteractivePlayback(session);
+      this.pumpInteractiveSynthesis(session);
+    } catch (error) {
+      this.releaseSpeechSession(job);
+      if (this._speechSession !== session) {
+        return;
+      }
+      if (!error.aborted) wx.showModal({
+        title: "朗读失败",
+        content: error.message || "Edge TTS 暂时不可用。",
+        showCancel: false,
+        confirmText: "知道了",
+      });
+      this.stopSpeech();
+    }
+  },
+
+  async pumpInteractivePlayback(session) {
+    if (this._speechSession !== session || session.playing) return;
+    const readyIndex = session.ready.findIndex((job) => job.index === session.nextPlayIndex);
+    if (readyIndex < 0) {
+      if (!session.generating && !session.preparing.length && !session.ready.length && !session.queue.length) {
+        this._speechSession = null;
+        this.releaseSpeechSession(session);
+        if (!this._unloaded) this.setData({ speaking: false, avatarState: this.data.busy ? "answering" : "idle" });
+      }
+      return;
+    }
+    const job = session.ready.splice(readyIndex, 1)[0];
+    session.nextPlayIndex += 1;
+    session.playing = true;
+    session.activeJob = job;
+    // Keep three future segments in synthesis or ready state while the current one plays.
+    this.pumpInteractiveSynthesis(session);
+    try {
+      await this.playInteractiveSpeechChunk(session, job);
+      if (this._speechSession !== session) return;
+      if (session.audio) {
+        session.audio.destroy();
+        session.audio = null;
+      }
+      this.releaseSpeechSession(job);
+      session.activeJob = null;
+      session.playing = false;
+      this.pumpInteractivePlayback(session);
+      this.pumpInteractiveSynthesis(session);
+    } catch (error) {
+      if (this._speechSession !== session) return;
+      if (!error.aborted) wx.showModal({
+        title: "朗读失败",
+        content: error.message || "Edge TTS 暂时不可用。",
+        showCancel: false,
+        confirmText: "知道了",
+      });
+      this.stopSpeech();
+    } finally {
+      if (this._speechSession !== session) this.releaseSpeechSession(job);
+    }
+  },
+
+  async playInteractiveSpeechChunk(session, job) {
+    const audio = wx.createInnerAudioContext();
+    session.audio = audio;
+    audio.obeyMuteSwitch = false;
+    await new Promise((resolve, reject) => {
+      let settled = false;
+      const finish = (callback, value) => {
+        if (settled) return;
+        settled = true;
+        session.cancelPlayback = null;
+        callback(value);
+      };
+      session.cancelPlayback = () => {
+        const error = new Error("请求已停止");
+        error.aborted = true;
+        finish(reject, error);
+      };
+      audio.onEnded(() => finish(resolve));
+      audio.onError(() => finish(reject, new Error("音频播放失败")));
+      this.setStageDisplayText(job.text);
+      audio.src = job.localPath;
+      audio.play();
+    });
   },
 
   async speakText(content, settings) {
@@ -633,6 +1102,19 @@ Page({
 
   releaseSpeechSession(session) {
     if (!session) return;
+    if (session.interactive) {
+      const jobs = [...session.preparing, session.activeJob, ...session.ready];
+      session.preparing = [];
+      session.activeJob = null;
+      session.ready = [];
+      session.queue = [];
+      jobs.forEach((job) => this.releaseSpeechSession(job));
+    }
+    if (session.cancelPlayback) {
+      const cancelPlayback = session.cancelPlayback;
+      session.cancelPlayback = null;
+      cancelPlayback();
+    }
     for (const key of ["request", "download"]) {
       const operation = session[key];
       session[key] = null;
@@ -667,6 +1149,7 @@ Page({
 
   stop() {
     this.abortActiveRequest();
+    this.stopSpeech();
   },
 
   abortActiveRequest() {
@@ -675,9 +1158,10 @@ Page({
 
   newConversation() {
     if (this.data.busy) return;
+    this.stopVoiceCapture();
     const conversation = createConversation();
     this._activeConversationId = conversation.id;
-    this.setData({ messages: [], inputValue: "", attachment: null });
+    this.setData({ messages: [], stageMessage: null, stageUserMessage: null, stageDisplayText: "", stageAnswerVisible: false, inputValue: "", attachment: null });
   },
 
   copyMessage(event) {

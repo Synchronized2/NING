@@ -38,6 +38,9 @@ Component({
     mdInstance: null,
   },
   methods: {
+    onRendered() {
+      this.triggerEvent('rendered');
+    },
     init() {
       const { options } = this.data;
 

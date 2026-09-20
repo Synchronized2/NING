@@ -2,6 +2,7 @@
   "navigationBarTitleText": "NING",
   "disableScroll": true,
   "usingComponents": {
-    "markdown-preview": "/components/markdown-preview/index"
+    "markdown-preview": "/components/markdown-preview/index",
+    "live2d-avatar": "/components/live2d-avatar/index"
   }
 }

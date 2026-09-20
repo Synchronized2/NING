@@ -26,7 +26,40 @@ test("migrates the 2.0 single service settings into a default profile", () => {
   assert.equal(settings.profileId, "default");
   assert.equal(settings.profileName, "默认服务");
   assert.equal(settings.chatModel, "gpt-test");
+  assert.equal(settings.useSeparateServices, false);
+  assert.deepEqual(storage.getImageService(settings), {
+    baseUrl: "https://example.com/v1",
+    apiKey: "secret",
+  });
   assert.equal(settings.ttsVoice, "zh-CN-XiaoxiaoNeural");
+  delete global.wx;
+});
+
+test("separate image service keeps independent credentials and model cache", () => {
+  const { storage } = loadStorage();
+  const current = storage.getSettings();
+  storage.saveSettings({
+    ...current,
+    baseUrl: "https://chat.example.com/v1/chat/completions",
+    apiKey: "chat-secret",
+    chatModel: "chat-model",
+    useSeparateServices: true,
+    imageBaseUrl: "https://image.example.com/v1/images/generations",
+    imageApiKey: "image-secret",
+    imageModel: "image-model",
+    models: ["chat-model"],
+    imageServiceModels: ["image-model"],
+  });
+  const settings = storage.getSettings();
+  assert.equal(settings.baseUrl, "https://chat.example.com/v1");
+  assert.equal(settings.imageBaseUrl, "https://image.example.com/v1");
+  assert.deepEqual(settings.imageServiceModels, ["image-model"]);
+  assert.deepEqual(storage.getImageService(settings), {
+    baseUrl: "https://image.example.com/v1",
+    apiKey: "image-secret",
+  });
+  assert.equal(storage.isChatConfigured(settings), true);
+  assert.equal(storage.isImageConfigured(settings), true);
   delete global.wx;
 });
 

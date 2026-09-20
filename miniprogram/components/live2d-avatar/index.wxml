@@ -1,0 +1,26 @@
+<view class="avatar-root">
+  <canvas
+    id="live2d-canvas"
+    class="avatar-canvas"
+    type="webgl"
+    aria-label="NING Live2D 互动形象"
+    bindtouchstart="onTouch"
+    bindtouchmove="onTouch"
+    bindtouchend="onTouchEnd"
+    bindtouchcancel="onTouchEnd"
+    bindtap="onTap"
+  ></canvas>
+  <button
+    wx:if="{{status === 'ready'}}"
+    class="view-toggle"
+    aria-label="{{viewMode === 'portrait' ? '切换全身视角' : '切换半身视角'}}"
+    catchtap="toggleViewMode"
+  >
+    <image src="{{viewMode === 'portrait' ? '/imgs/minimize-2.svg' : '/imgs/maximize-2.svg'}}" mode="aspectFit" />
+  </button>
+  <view wx:if="{{status !== 'ready'}}" class="avatar-status {{status === 'error' ? 'error' : ''}}">
+    <view wx:if="{{status === 'loading'}}" class="status-dot"></view>
+    <text>{{statusText}}</text>
+    <button wx:if="{{status === 'error'}}" class="retry-button" bindtap="retry">重试</button>
+  </view>
+</view>

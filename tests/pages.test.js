@@ -53,14 +53,28 @@ test("every WXML event handler exists on its page definition", () => {
   });
 });
 
-test("voice transcription UI and recording permission stay removed", () => {
+test("recording is limited to interactive chat and declares microphone permission", () => {
   const root = path.resolve(__dirname, "..");
   const indexMarkup = fs.readFileSync(path.join(root, "miniprogram/pages/index/index.wxml"), "utf8");
   const settingsMarkup = fs.readFileSync(path.join(root, "miniprogram/pages/settings/settings.wxml"), "utf8");
   const appConfig = JSON.parse(fs.readFileSync(path.join(root, "miniprogram/app.json"), "utf8"));
-  assert.doesNotMatch(indexMarkup, /toggleRecording|microphone|语音输入/);
+  assert.match(indexMarkup, /avatarEnabled && mode === 'chat' && !interactiveTextInput/);
+  assert.match(indexMarkup, /bindtap="toggleVoiceCapture"/);
   assert.doesNotMatch(settingsMarkup, /transcriptionModel|语音识别模型/);
-  assert.equal(appConfig.permission && appConfig.permission["scope.record"], undefined);
+  assert.match(appConfig.permission["scope.record"].desc, /语音对话/);
+});
+
+test("settings supports shared and separate chat and image services", () => {
+  const markup = fs.readFileSync(path.resolve(__dirname, "../miniprogram/pages/settings/settings.wxml"), "utf8");
+  const indexSource = fs.readFileSync(path.resolve(__dirname, "../miniprogram/pages/index/index.js"), "utf8");
+  assert.match(markup, /checked="{{useSeparateServices}}"[^>]*bindchange="toggleSeparateServices"/);
+  assert.match(markup, /data-field="imageBaseUrl"/);
+  assert.match(markup, /data-field="imageApiKey"/);
+  assert.match(markup, /bindtap="fetchChatModels"/);
+  assert.match(markup, /bindtap="fetchImageModels"/);
+  assert.match(indexSource, /const imageService = getImageService\(settings\)/);
+  assert.match(indexSource, /baseUrl: imageService\.baseUrl/);
+  assert.match(indexSource, /apiKey: imageService\.apiKey/);
 });
 
 test("home action icons use the enlarged dimensions", () => {
@@ -83,8 +97,85 @@ test("home composer height is resynchronized after page visibility and viewport 
   assert.match(source, /onShow\(\)\s*{[\s\S]*?this\._keyboardHeight = 0;[\s\S]*?this\.refreshPageHeight\(\)/);
   assert.match(source, /onResize\(event\)\s*{/);
   assert.match(source, /onKeyboardHeightChange\(event\)\s*{[\s\S]*?this\.refreshPageHeight\(\)/);
-  assert.match(markup, /class="page" style="{{pageHeightStyle}}"/);
+  assert.match(markup, /class="page .*" style="{{pageHeightStyle}}"/);
   assert.doesNotMatch(markup, /height:\s*{{pageHeight}}px/);
+});
+
+test("streaming answers alternate bottom anchors so the same message keeps scrolling", () => {
+  const page = loadPage("miniprogram/pages/index/index.js");
+  const context = {
+    data: { scrollTarget: "page-bottom", messages: [{ id: "answer", role: "assistant" }] },
+    setData(update) { Object.assign(this.data, update); },
+    _unloaded: false,
+  };
+  page.scrollToBottom.call(context, "answer");
+  assert.equal(context.data.scrollTarget, "page-bottom-alt");
+  page.scrollToBottom.call(context, "answer");
+  assert.equal(context.data.scrollTarget, "page-bottom");
+  page.onMessageRendered.call({ ...context, scrollToBottom: () => { context.rendered = true; } }, {
+    currentTarget: { dataset: { id: "answer" } },
+  });
+  assert.equal(context.rendered, true);
+  const markup = fs.readFileSync(path.resolve(__dirname, "../miniprogram/pages/index/index.wxml"), "utf8");
+  assert.match(markup, /id="page-bottom"/);
+  assert.match(markup, /id="page-bottom-alt"/);
+  assert.match(markup, /bindrendered="onMessageRendered"/);
+  assert.match(markup, /bindload="onMessageRendered"/);
+});
+
+test("interactive chat keeps only the latest turn over the avatar stage", () => {
+  const page = loadPage("miniprogram/pages/index/index.js");
+  const messages = [
+    { id: "u1", role: "user", sourceMode: "chat", content: "上一问" },
+    { id: "a1", role: "assistant", sourceMode: "chat", content: "上一答" },
+    { id: "image", role: "assistant", sourceMode: "image", content: "" },
+    { id: "u2", role: "user", sourceMode: "chat", content: "这一问" },
+    { id: "a2", role: "assistant", sourceMode: "chat", content: "这一答" },
+  ];
+  const turn = page.latestStageTurn.call({ latestStageMessage: page.latestStageMessage }, messages);
+  assert.equal(turn.stageUserMessage.id, "u2");
+  assert.equal(turn.stageMessage.id, "a2");
+  assert.equal(turn.stageAnswerVisible, true);
+  const pending = page.latestStageTurn.call({ latestStageMessage: page.latestStageMessage }, [
+    ...messages.slice(0, -1),
+    { id: "a2", role: "assistant", sourceMode: "chat", content: "", pending: true },
+  ]);
+  assert.equal(pending.stageAnswerVisible, false);
+
+  const markup = fs.readFileSync(path.resolve(__dirname, "../miniprogram/pages/index/index.wxml"), "utf8");
+  assert.match(markup, /class="interactive-stage"[\s\S]*class="interactive-dialog"[\s\S]*class="voice-controls"/);
+  assert.doesNotMatch(markup, /interactive-reply/);
+  assert.match(markup, /wx:if="{{stageUserMessage && !stageAnswerVisible}}"[\s\S]*stageUserMessage\.content[\s\S]*wx:else class="dialog-scroll"/);
+  assert.match(markup, /stageDisplayText/);
+  assert.doesNotMatch(markup, /stageMessage\.content/);
+});
+
+test("interactive mode forces automatic speech while text mode keeps streaming updates", () => {
+  const source = fs.readFileSync(path.resolve(__dirname, "../miniprogram/pages/index/index.js"), "utf8");
+  const markup = fs.readFileSync(path.resolve(__dirname, "../miniprogram/pages/index/index.wxml"), "utf8");
+  assert.match(source, /const interactiveSpeech = this\.data\.avatarEnabled\s*\? this\.startInteractiveSpeech\(settings\)/);
+  assert.match(source, /queueInteractiveSpeech\(interactiveSpeech, delta\)/);
+  assert.match(source, /this\.scheduleStreamUpdate\(assistantId, streamedText\)/);
+  assert.match(markup, /autoSpeak \|\| \(avatarEnabled && mode === 'chat'\)/);
+});
+
+test("Codex-client-only 403 does not retry through another transport", async () => {
+  const page = loadPage("miniprogram/pages/index/index.js");
+  let calls = 0;
+  const restricted = new Error("当前账号只允许 Codex 官方客户端调用");
+  restricted.statusCode = 403;
+  restricted.code = "CODEX_OFFICIAL_CLIENT_ONLY";
+  const context = {
+    performChatRequest() {
+      calls += 1;
+      return Promise.reject(restricted);
+    },
+  };
+  await assert.rejects(
+    page.performCompatibleChatRequest.call(context, { useCloudProxy: false }, [], () => {}, false),
+    (error) => error === restricted,
+  );
+  assert.equal(calls, 1);
 });
 
 test("the active interface is independent from the legacy agent UI sample", () => {

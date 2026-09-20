@@ -31,11 +31,17 @@ function normalizeSettings(saved = {}) {
   return {
     baseUrl: String(saved.baseUrl || "").trim(),
     apiKey: String(saved.apiKey || "").trim(),
+    useSeparateServices: saved.useSeparateServices === true,
+    imageBaseUrl: String(saved.imageBaseUrl || "").trim(),
+    imageApiKey: String(saved.imageApiKey || "").trim(),
     chatModel: String(saved.chatModel || "").trim(),
     imageModel: String(saved.imageModel || "").trim(),
     systemPrompt: typeof saved.systemPrompt === "string" ? saved.systemPrompt : DEFAULT_SYSTEM_PROMPT,
     useCloudProxy: saved.useCloudProxy !== false,
     models: Array.isArray(saved.models) ? saved.models.filter((item) => typeof item === "string").slice(0, 500) : [],
+    imageServiceModels: Array.isArray(saved.imageServiceModels)
+      ? saved.imageServiceModels.filter((item) => typeof item === "string").slice(0, 500)
+      : [],
     imageSize: String(saved.imageSize || "1024x1024"),
     imageQuality: String(saved.imageQuality || "standard"),
     imageStyle: String(saved.imageStyle || "vivid"),
@@ -43,6 +49,7 @@ function normalizeSettings(saved = {}) {
     outputPrice: Math.max(0, Number(saved.outputPrice) || 0),
     imagePrice: Math.max(0, Number(saved.imagePrice) || 0),
     autoSpeak: saved.autoSpeak === true,
+    avatarEnabled: saved.avatarEnabled !== false,
     ttsVoice: String(saved.ttsVoice || "zh-CN-XiaoxiaoNeural"),
     ttsRate: Math.max(-100, Math.min(200, Number(saved.ttsRate) || 0)),
     ttsVolume: Math.max(-100, Math.min(100, Number(saved.ttsVolume) || 0)),
@@ -95,6 +102,7 @@ function saveSettings(settings) {
     ...normalizeSettings({
       ...settings,
       baseUrl: normalizeBaseUrl(settings.baseUrl),
+      imageBaseUrl: normalizeBaseUrl(settings.imageBaseUrl),
       systemPrompt: String(settings.systemPrompt || "").trim(),
     }),
   };
@@ -151,8 +159,17 @@ function isChatConfigured(settings) {
   return Boolean(settings.baseUrl && settings.apiKey && settings.chatModel);
 }
 
+function getImageService(settings) {
+  const separate = settings && settings.useSeparateServices === true;
+  return {
+    baseUrl: separate ? settings.imageBaseUrl : settings.baseUrl,
+    apiKey: separate ? settings.imageApiKey : settings.apiKey,
+  };
+}
+
 function isImageConfigured(settings) {
-  return Boolean(settings.baseUrl && settings.apiKey && settings.imageModel);
+  const service = getImageService(settings || {});
+  return Boolean(service.baseUrl && service.apiKey && settings.imageModel);
 }
 
 function normalizeMessages(value) {
@@ -347,6 +364,7 @@ module.exports = {
   getActiveConversationId,
   getConversation,
   getConversationList,
+  getImageService,
   getProfiles,
   getSettings,
   getUsageStats,

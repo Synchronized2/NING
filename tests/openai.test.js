@@ -11,6 +11,7 @@ const {
   createChatCompletion,
   createImage,
   isSecureBaseUrl,
+  isCodexOnlyClientError,
   normalizeBaseUrl,
   parseImageToolCall,
   synthesizeSpeech,
@@ -145,6 +146,33 @@ test("accepts a non-streaming JSON chat response", async () => {
     useCloudProxy: false,
   });
   assert.equal((await operation.promise).text, "普通响应");
+  delete global.wx;
+});
+
+test("translates a mixed Codex-client-only 403 response", async () => {
+  global.wx = {
+    request(options) {
+      queueMicrotask(() => options.success({
+        statusCode: 403,
+        data: '{"error":{"message":"This account only allows Codex official clients"}}\ndata: {"error":"duplicate"}',
+      }));
+      return { onChunkReceived() {}, abort() {} };
+    },
+  };
+  const operation = createChatCompletion({
+    baseUrl: "https://example.com/v1",
+    apiKey: "secret",
+    model: "chat-model",
+    messages: [{ role: "user", content: "hi" }],
+    useCloudProxy: false,
+  });
+  await assert.rejects(operation.promise, (error) => {
+    assert.equal(error.statusCode, 403);
+    assert.equal(isCodexOnlyClientError(error), true);
+    assert.match(error.message, /只允许 Codex 官方客户端/);
+    assert.doesNotMatch(error.message, /duplicate|data:/);
+    return true;
+  });
   delete global.wx;
 });
 

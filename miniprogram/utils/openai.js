@@ -14,6 +14,8 @@ const KNOWN_RESOURCES = [
   "/images/edits",
   "/models",
 ];
+const CODEX_CLIENT_ONLY_CODE = "CODEX_OFFICIAL_CLIENT_ONLY";
+const CODEX_CLIENT_ONLY_PATTERN = /(?:this\s+account\s+)?only\s+allows?\s+codex\s+official\s+clients?/i;
 function normalizeBaseUrl(baseUrl) {
   let normalized = String(baseUrl || "").trim();
   while (normalized.endsWith("/")) normalized = normalized.slice(0, -1);
@@ -84,14 +86,60 @@ function boundedText(value) {
   return String(value || "").replace(/\s+/g, " ").trim().slice(0, 500);
 }
 
-function apiError(statusCode, body, apiKey) {
-  const parsed = parseJson(body);
-  let message = "";
-  if (parsed && parsed.error) {
-    message = typeof parsed.error === "string" ? parsed.error : parsed.error.message;
+function errorMessageFromBody(body) {
+  if (body && typeof body === "object" && !(body instanceof ArrayBuffer)) {
+    if (body.error) {
+      if (typeof body.error === "string") return body.error;
+      const nested = errorMessageFromBody(body.error);
+      if (nested) return nested;
+    }
+    for (const key of ["message", "detail", "error_description"]) {
+      if (typeof body[key] === "string" && body[key].trim()) return body[key];
+    }
+    return "";
   }
-  if (!message && parsed && parsed.message) message = parsed.message;
-  if (!message && typeof body === "string") message = body;
+  if (typeof body !== "string" || !body.trim()) return "";
+  const parsed = parseJson(body);
+  if (parsed) return errorMessageFromBody(parsed);
+  for (const line of body.split(/\r?\n/)) {
+    const payload = line.replace(/^\s*data:\s*/i, "").trim();
+    if (!payload || payload === "[DONE]" || payload === body.trim()) continue;
+    const lineParsed = parseJson(payload);
+    if (lineParsed) {
+      const message = errorMessageFromBody(lineParsed);
+      if (message) return message;
+    }
+  }
+  const field = body.match(/"(?:message|detail|error_description)"\s*:\s*"((?:\\.|[^"\\])*)"/i);
+  if (field) {
+    try { return JSON.parse(`"${field[1]}"`); } catch (_) { return field[1]; }
+  }
+  return body;
+}
+
+function codexClientOnlyError(value, statusCode = 0) {
+  let searchable = typeof value === "string" ? value : "";
+  if (!searchable && value) {
+    try { searchable = JSON.stringify(value); } catch (_) {}
+  }
+  if (!CODEX_CLIENT_ONLY_PATTERN.test(searchable)) return null;
+  const error = makeError(
+    "当前账号只允许 Codex 官方客户端调用，NING 无法使用这个 API Key。请更换支持标准 API 调用的账号、Key 或模型节点。",
+    statusCode || 403,
+  );
+  error.code = CODEX_CLIENT_ONLY_CODE;
+  return error;
+}
+
+function isCodexOnlyClientError(error) {
+  return Boolean(error && (error.code === CODEX_CLIENT_ONLY_CODE ||
+    CODEX_CLIENT_ONLY_PATTERN.test(String(error.message || error))));
+}
+
+function apiError(statusCode, body, apiKey) {
+  const restricted = codexClientOnlyError(body, statusCode);
+  if (restricted) return restricted;
+  let message = errorMessageFromBody(body);
   message = boundedText(message) || "模型服务请求失败";
   if (apiKey) message = message.split(apiKey).join("[REDACTED]");
   return makeError(`HTTP ${statusCode}：${message}`, statusCode);
@@ -295,7 +343,8 @@ function callCloudProxy(action, data) {
         const message = isTtsAction
           ? `Edge TTS 免费且不使用模型 API Key。${reason}`
           : reason;
-        const error = makeError(message, (result && result.statusCode) || 0);
+        const statusCode = (result && result.statusCode) || 0;
+        const error = codexClientOnlyError(reason, statusCode) || makeError(message, statusCode);
         finishWithError(error, attempt);
         return;
       }
@@ -502,7 +551,7 @@ function contentToText(content) {
 function extractCompletion(response, accumulator) {
   if (response && response.error) {
     const message = typeof response.error === "string" ? response.error : response.error.message;
-    throw makeError(boundedText(message) || "模型节点返回错误");
+    throw codexClientOnlyError(message, 403) || makeError(boundedText(message) || "模型节点返回错误");
   }
   const choice = response && Array.isArray(response.choices) ? response.choices[0] : null;
   if (!choice) return "";
@@ -808,6 +857,7 @@ module.exports = {
   createChatCompletion,
   createImage,
   isSecureBaseUrl,
+  isCodexOnlyClientError,
   listModels,
   listTtsVoices,
   materializeImage,

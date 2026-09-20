@@ -5,6 +5,7 @@ miniprogram_npm/
 dist/
 build/
 coverage/
+artifacts/
 *.zip
 
 # Local configuration and secrets

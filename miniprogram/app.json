@@ -15,6 +15,11 @@
   },
   "sitemapLocation": "sitemap.json",
   "style": "v2",
+  "permission": {
+    "scope.record": {
+      "desc": "用于互动形象语音对话，录音在说话结束后上传识别"
+    }
+  },
   "lazyCodeLoading": "requiredComponents",
   "networkTimeout": {
     "request": 600000,

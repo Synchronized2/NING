@@ -67,21 +67,29 @@ Page({
     profileIndex: 0,
     baseUrl: "",
     apiKey: "",
+    useSeparateServices: false,
+    imageBaseUrl: "",
+    imageApiKey: "",
     chatModel: "",
     imageModel: "",
     systemPrompt: "",
     useCloudProxy: true,
     allModels: [],
+    imageServiceModels: [],
     chatModels: [],
     imageModels: [],
     keyMasked: true,
-    fetching: false,
-    modelStatus: "",
-    modelStatusError: false,
+    fetchingChatModels: false,
+    fetchingImageModels: false,
+    chatModelStatus: "",
+    chatModelStatusError: false,
+    imageModelStatus: "",
+    imageModelStatusError: false,
     inputPrice: "0",
     outputPrice: "0",
     imagePrice: "0",
     autoSpeak: false,
+    avatarEnabled: true,
     ttsVoice: "zh-CN-XiaoxiaoNeural",
     ttsRate: 0,
     ttsVolume: 0,
@@ -107,7 +115,8 @@ Page({
   onUnload() {
     this._unloaded = true;
     this.stopTtsPreview();
-    if (this._modelRequest) this._modelRequest.abort();
+    if (this._chatModelRequest) this._chatModelRequest.abort();
+    if (this._imageModelRequest) this._imageModelRequest.abort();
     if (this._voiceRequest) this._voiceRequest.abort();
   },
 
@@ -120,6 +129,10 @@ Page({
     const settings = getSettings();
     const profiles = getProfiles();
     const models = classifyModels(settings.models);
+    const separateImageModels = classifyModels(settings.imageServiceModels);
+    const imageModels = settings.useSeparateServices
+      ? (separateImageModels.image.length ? separateImageModels.image : separateImageModels.all)
+      : models.image;
     const ttsVoices = settings.ttsVoices.length ? settings.ttsVoices : FALLBACK_TTS_VOICES;
     this.setData({
       profileId: settings.profileId,
@@ -129,19 +142,28 @@ Page({
       profileIndex: Math.max(0, profiles.findIndex((item) => item.id === settings.profileId)),
       baseUrl: settings.baseUrl,
       apiKey: settings.apiKey,
+      useSeparateServices: settings.useSeparateServices,
+      imageBaseUrl: settings.imageBaseUrl,
+      imageApiKey: settings.imageApiKey,
       chatModel: settings.chatModel,
       imageModel: settings.imageModel,
       systemPrompt: settings.systemPrompt,
       useCloudProxy: settings.useCloudProxy,
       allModels: models.all,
+      imageServiceModels: separateImageModels.all,
       chatModels: models.chat,
-      imageModels: models.image,
-      modelStatus: models.all.length ? `已缓存 ${models.all.length} 个模型` : "",
-      modelStatusError: false,
+      imageModels,
+      chatModelStatus: models.all.length ? `已缓存 ${models.all.length} 个模型` : "",
+      chatModelStatusError: false,
+      imageModelStatus: settings.useSeparateServices && separateImageModels.all.length
+        ? `已缓存 ${separateImageModels.all.length} 个模型`
+        : "",
+      imageModelStatusError: false,
       inputPrice: String(settings.inputPrice),
       outputPrice: String(settings.outputPrice),
       imagePrice: String(settings.imagePrice),
       autoSpeak: settings.autoSpeak,
+      avatarEnabled: settings.avatarEnabled,
       ttsVoice: settings.ttsVoice,
       ttsRate: settings.ttsRate,
       ttsVolume: settings.ttsVolume,
@@ -169,8 +191,31 @@ Page({
     this.setData({ useCloudProxy: event.detail.value });
   },
 
+  toggleSeparateServices(event) {
+    const useSeparateServices = event.detail.value;
+    const updates = { useSeparateServices };
+    if (useSeparateServices) {
+      if (!this.data.imageBaseUrl) updates.imageBaseUrl = this.data.baseUrl;
+      if (!this.data.imageApiKey) updates.imageApiKey = this.data.apiKey;
+      const cached = classifyModels(this.data.imageServiceModels);
+      updates.imageModels = cached.image.length ? cached.image : cached.all;
+      updates.imageModelStatus = cached.all.length ? `已缓存 ${cached.all.length} 个模型` : "";
+      updates.imageModelStatusError = false;
+    } else {
+      const shared = classifyModels(this.data.allModels);
+      updates.imageModels = shared.image;
+      updates.imageModelStatus = "";
+      updates.imageModelStatusError = false;
+    }
+    this.setData(updates);
+  },
+
   toggleAutoSpeak(event) {
     this.setData({ autoSpeak: event.detail.value });
+  },
+
+  toggleAvatar(event) {
+    this.setData({ avatarEnabled: event.detail.value });
   },
 
   selectProfile(event) {
@@ -326,35 +371,69 @@ Page({
     if (!this._unloaded) this.setData({ ttsPreviewState: "idle", ttsPreviewStatus: "", ttsPreviewError: false });
   },
 
-  async fetchModels() {
-    if (this.data.fetching) return;
+  async fetchChatModels() {
+    if (this.data.fetchingChatModels) return;
     const baseUrl = normalizeBaseUrl(this.data.baseUrl);
     const apiKey = this.data.apiKey.trim();
-    if (!isSecureBaseUrl(baseUrl)) return wx.showToast({ title: "请输入有效的 HTTPS URL", icon: "none" });
-    if (!apiKey) return wx.showToast({ title: "请输入 API Key", icon: "none" });
-    this.setData({ fetching: true, modelStatus: "正在读取 /models...", modelStatusError: false });
+    if (!isSecureBaseUrl(baseUrl)) return wx.showToast({ title: "请输入有效的对话服务 URL", icon: "none" });
+    if (!apiKey) return wx.showToast({ title: "请输入对话服务 API Key", icon: "none" });
+    this.setData({ fetchingChatModels: true, chatModelStatus: "正在读取 /models...", chatModelStatusError: false });
     const operation = listModels({ baseUrl, apiKey, useCloudProxy: this.data.useCloudProxy });
-    this._modelRequest = operation;
+    this._chatModelRequest = operation;
     try {
       const models = await operation.promise;
-      this.setData({
+      const updates = {
         baseUrl,
         allModels: models.all,
         chatModels: models.chat,
-        imageModels: models.image,
         chatModel: this.data.chatModel || models.chat[0] || "",
-        imageModel: this.data.imageModel || models.image[0] || "",
-        modelStatus: `获取成功：${models.all.length} 个模型`,
-        modelStatusError: false,
+        chatModelStatus: `获取成功：${models.all.length} 个模型`,
+        chatModelStatusError: false,
+      };
+      if (!this.data.useSeparateServices) {
+        updates.imageModels = models.image;
+        updates.imageModel = this.data.imageModel || models.image[0] || "";
+      }
+      this.setData(updates);
+    } catch (error) {
+      if (!error.aborted) {
+        this.setData({ chatModelStatus: error.message, chatModelStatusError: true });
+        wx.showToast({ title: "获取对话模型失败", icon: "none" });
+      }
+    } finally {
+      this._chatModelRequest = null;
+      this.setData({ fetchingChatModels: false });
+    }
+  },
+
+  async fetchImageModels() {
+    if (this.data.fetchingImageModels) return;
+    const baseUrl = normalizeBaseUrl(this.data.imageBaseUrl);
+    const apiKey = this.data.imageApiKey.trim();
+    if (!isSecureBaseUrl(baseUrl)) return wx.showToast({ title: "请输入有效的生图服务 URL", icon: "none" });
+    if (!apiKey) return wx.showToast({ title: "请输入生图服务 API Key", icon: "none" });
+    this.setData({ fetchingImageModels: true, imageModelStatus: "正在读取 /models...", imageModelStatusError: false });
+    const operation = listModels({ baseUrl, apiKey, useCloudProxy: this.data.useCloudProxy });
+    this._imageModelRequest = operation;
+    try {
+      const models = await operation.promise;
+      const imageModels = models.image.length ? models.image : models.all;
+      this.setData({
+        imageBaseUrl: baseUrl,
+        imageServiceModels: models.all,
+        imageModels,
+        imageModel: this.data.imageModel || imageModels[0] || "",
+        imageModelStatus: `获取成功：${models.all.length} 个模型`,
+        imageModelStatusError: false,
       });
     } catch (error) {
       if (!error.aborted) {
-        this.setData({ modelStatus: error.message, modelStatusError: true });
-        wx.showToast({ title: "获取模型失败", icon: "none" });
+        this.setData({ imageModelStatus: error.message, imageModelStatusError: true });
+        wx.showToast({ title: "获取生图模型失败", icon: "none" });
       }
     } finally {
-      this._modelRequest = null;
-      this.setData({ fetching: false });
+      this._imageModelRequest = null;
+      this.setData({ fetchingImageModels: false });
     }
   },
 
@@ -400,15 +479,20 @@ Page({
       profileName: this.data.profileName,
       baseUrl: normalizeBaseUrl(this.data.baseUrl),
       apiKey: this.data.apiKey.trim(),
+      useSeparateServices: this.data.useSeparateServices,
+      imageBaseUrl: normalizeBaseUrl(this.data.imageBaseUrl),
+      imageApiKey: this.data.imageApiKey.trim(),
       chatModel: this.data.chatModel.trim(),
       imageModel: this.data.imageModel.trim(),
       systemPrompt: this.data.systemPrompt,
       useCloudProxy: this.data.useCloudProxy,
       models: this.data.allModels,
+      imageServiceModels: this.data.imageServiceModels,
       inputPrice: Number(this.data.inputPrice) || 0,
       outputPrice: Number(this.data.outputPrice) || 0,
       imagePrice: Number(this.data.imagePrice) || 0,
       autoSpeak: this.data.autoSpeak,
+      avatarEnabled: this.data.avatarEnabled,
       ttsVoice: this.data.ttsVoice,
       ttsRate: this.data.ttsRate,
       ttsVolume: this.data.ttsVolume,
@@ -422,9 +506,13 @@ Page({
 
   save() {
     const value = this.collectSettings();
-    if (!isSecureBaseUrl(value.baseUrl)) return wx.showToast({ title: "请输入有效的 HTTPS URL", icon: "none" });
-    if (!value.apiKey) return wx.showToast({ title: "请输入 API Key", icon: "none" });
+    if (!isSecureBaseUrl(value.baseUrl)) return wx.showToast({ title: "请输入有效的对话服务 URL", icon: "none" });
+    if (!value.apiKey) return wx.showToast({ title: "请输入对话服务 API Key", icon: "none" });
     if (!value.chatModel) return wx.showToast({ title: "请选择或填写对话模型", icon: "none" });
+    if (value.useSeparateServices && value.imageModel) {
+      if (!isSecureBaseUrl(value.imageBaseUrl)) return wx.showToast({ title: "请输入有效的生图服务 URL", icon: "none" });
+      if (!value.imageApiKey) return wx.showToast({ title: "请输入生图服务 API Key", icon: "none" });
+    }
     try {
       saveSettings(value);
       wx.showToast({ title: "设置已保存" });

@@ -18,14 +18,43 @@
 
   <view class="section">
     <text class="section-title">连接</text>
-    <label class="field">
-      <text class="field-label">服务 URL</text>
-      <input class="field-input" value="{{baseUrl}}" data-field="baseUrl" bindinput="onFieldInput" placeholder="https://example.com/v1" maxlength="500" />
-    </label>
-    <label class="field">
-      <text class="field-label">API Key</text>
-      <input class="field-input" value="{{apiKey}}" data-field="apiKey" bindinput="onFieldInput" placeholder="sk-..." password="{{keyMasked}}" maxlength="1000" />
-    </label>
+    <view class="toggle-row connection-mode">
+      <view class="toggle-copy">
+        <text>{{useSeparateServices ? '使用不同服务' : '使用相同服务'}}</text>
+        <text class="toggle-help">{{useSeparateServices ? '对话与生图分别配置 URL 和 API Key' : '对话与生图共用一组连接'}}</text>
+      </view>
+      <switch checked="{{useSeparateServices}}" color="#17a673" bindchange="toggleSeparateServices" />
+    </view>
+    <view class="service-group">
+      <text wx:if="{{useSeparateServices}}" class="service-group-title">对话模型服务</text>
+      <label class="field">
+        <text class="field-label">{{useSeparateServices ? '对话服务 URL' : '服务 URL'}}</text>
+        <input class="field-input" value="{{baseUrl}}" data-field="baseUrl" bindinput="onFieldInput" placeholder="https://example.com/v1" maxlength="500" />
+      </label>
+      <label class="field">
+        <text class="field-label">{{useSeparateServices ? '对话服务 API Key' : 'API Key'}}</text>
+        <input class="field-input" value="{{apiKey}}" data-field="apiKey" bindinput="onFieldInput" placeholder="sk-..." password="{{keyMasked}}" maxlength="1000" />
+      </label>
+      <button class="secondary-button" loading="{{fetchingChatModels}}" disabled="{{fetchingChatModels}}" bindtap="fetchChatModels">
+        {{fetchingChatModels ? '正在获取模型' : (useSeparateServices ? '获取对话模型列表' : '获取模型列表')}}
+      </button>
+      <text class="status-text {{chatModelStatusError ? 'error' : ''}}">{{chatModelStatus}}</text>
+    </view>
+    <view wx:if="{{useSeparateServices}}" class="service-group separate-service-group">
+      <text class="service-group-title">生图模型服务</text>
+      <label class="field">
+        <text class="field-label">生图服务 URL</text>
+        <input class="field-input" value="{{imageBaseUrl}}" data-field="imageBaseUrl" bindinput="onFieldInput" placeholder="https://example.com/v1" maxlength="500" />
+      </label>
+      <label class="field">
+        <text class="field-label">生图服务 API Key</text>
+        <input class="field-input" value="{{imageApiKey}}" data-field="imageApiKey" bindinput="onFieldInput" placeholder="sk-..." password="{{keyMasked}}" maxlength="1000" />
+      </label>
+      <button class="secondary-button" loading="{{fetchingImageModels}}" disabled="{{fetchingImageModels}}" bindtap="fetchImageModels">
+        {{fetchingImageModels ? '正在获取模型' : '获取生图模型列表'}}
+      </button>
+      <text class="status-text {{imageModelStatusError ? 'error' : ''}}">{{imageModelStatus}}</text>
+    </view>
     <view class="toggle-row">
       <text>显示 API Key</text>
       <switch checked="{{!keyMasked}}" color="#17a673" bindchange="toggleKey" />
@@ -37,10 +66,6 @@
       </view>
       <switch checked="{{useCloudProxy}}" color="#17a673" bindchange="toggleCloudProxy" />
     </view>
-    <button class="secondary-button" loading="{{fetching}}" disabled="{{fetching}}" bindtap="fetchModels">
-      {{fetching ? '正在获取模型' : '获取模型列表'}}
-    </button>
-    <text class="status-text {{modelStatusError ? 'error' : ''}}">{{modelStatus}}</text>
   </view>
 
   <view class="section">
@@ -91,6 +116,24 @@
       <text class="preview-help">使用当前音色和参数，无需先保存或填写 API Key。</text>
     </view>
     <text wx:if="{{ttsPreviewStatus}}" class="preview-status {{ttsPreviewError ? 'error' : ''}}">{{ttsPreviewStatus}}</text>
+  </view>
+
+  <view class="section">
+    <text class="section-title">互动形象</text>
+    <view class="toggle-row">
+      <view class="toggle-copy">
+          <text>互动形象对话</text>
+          <text class="toggle-help">开启后进入人物互动与语音对话；关闭时保留完整文字聊天。</text>
+      </view>
+      <switch checked="{{avatarEnabled}}" color="#17a673" bindchange="toggleAvatar" />
+    </view>
+    <view class="avatar-summary">
+      <view class="avatar-swatch">日</view>
+      <view class="avatar-summary-copy">
+        <text class="avatar-name">桃濑日和 PRO</text>
+        <text class="avatar-detail">本地运行 · 原生 Canvas/WebGL</text>
+      </view>
+    </view>
   </view>
 
   <view class="section">
