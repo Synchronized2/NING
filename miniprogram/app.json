@@ -4,6 +4,9 @@
     "pages/history/history",
     "pages/settings/settings"
   ],
+  "subPackages": [
+    { "root": "packages/avatars", "pages": ["pages/index"] }
+  ],
   "usingComponents": {},
   "window": {
     "navigationBarBackgroundColor": "#f7f8fa",

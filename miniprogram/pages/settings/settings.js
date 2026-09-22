@@ -18,13 +18,32 @@ const {
   selectProfile: activateProfile,
 } = require("../../utils/storage");
 
+const POPULAR_TTS_VOICES = [
+  ["Xiaoxiao", "晓晓", "Female", "温柔"],
+  ["Yunxi", "云希", "Male", "清朗"],
+  ["Yunyang", "云扬", "Male", "阳光"],
+  ["Xiaoyi", "晓伊", "Female", "甜美"],
+  ["Yunjian", "云健", "Male", "稳重"],
+  ["Xiaochen", "晓辰", "Female", "知性"],
+  ["Xiaohan", "晓涵", "Female", "优雅"],
+  ["Xiaomeng", "晓梦", "Female", "梦幻"],
+  ["Xiaomo", "晓墨", "Female", "文艺"],
+  ["Xiaoqiu", "晓秋", "Female", "成熟"],
+  ["Xiaorui", "晓睿", "Female", "智慧"],
+  ["Xiaoshuang", "晓双", "Female", "活泼"],
+  ["Xiaoxuan", "晓萱", "Female", "清新"],
+  ["Xiaoyan", "晓颜", "Female", "柔美"],
+  ["Xiaoyou", "晓悠", "Female", "悠扬"],
+  ["Xiaozhen", "晓甄", "Female", "端庄"],
+  ["Yunfeng", "云枫", "Male", "磁性"],
+  ["Yunhao", "云皓", "Male", "豪迈"],
+  ["Yunxia", "云夏", "Male", "热情"],
+].map(([id, localName, gender, character]) => ({
+  shortName: `zh-CN-${id}Neural`, localName, locale: "zh-CN", gender, character,
+}));
+
 const FALLBACK_TTS_VOICES = [
-  { shortName: "zh-CN-XiaoxiaoNeural", localName: "晓晓", locale: "zh-CN", gender: "Female" },
-  { shortName: "zh-CN-XiaoyiNeural", localName: "晓伊", locale: "zh-CN", gender: "Female" },
-  { shortName: "zh-CN-YunjianNeural", localName: "云健", locale: "zh-CN", gender: "Male" },
-  { shortName: "zh-CN-YunxiNeural", localName: "云希", locale: "zh-CN", gender: "Male" },
-  { shortName: "zh-CN-YunxiaNeural", localName: "云夏", locale: "zh-CN", gender: "Male" },
-  { shortName: "zh-CN-YunyangNeural", localName: "云扬", locale: "zh-CN", gender: "Male" },
+  ...POPULAR_TTS_VOICES,
   { shortName: "zh-CN-liaoning-XiaobeiNeural", localName: "晓北（辽宁）", locale: "zh-CN-liaoning", gender: "Female" },
   { shortName: "zh-CN-shaanxi-XiaoniNeural", localName: "晓妮（陕西）", locale: "zh-CN-shaanxi", gender: "Female" },
   { shortName: "zh-HK-HiuGaaiNeural", localName: "曉佳（粤语）", locale: "zh-HK", gender: "Female" },
@@ -35,7 +54,33 @@ const FALLBACK_TTS_VOICES = [
   { shortName: "zh-TW-YunJheNeural", localName: "云哲（台湾）", locale: "zh-TW", gender: "Male" },
 ];
 
+const TTS_STYLES = [
+  { id: "general", name: "通用风格" },
+  { id: "assistant", name: "智能助手" },
+  { id: "chat", name: "聊天对话" },
+  { id: "customerservice", name: "客服专业" },
+  { id: "newscast", name: "新闻播报" },
+  { id: "affectionate", name: "亲切温暖" },
+  { id: "calm", name: "平静舒缓" },
+  { id: "cheerful", name: "愉快欢乐" },
+  { id: "gentle", name: "温和柔美" },
+  { id: "lyrical", name: "抒情诗意" },
+  { id: "serious", name: "严肃正式" },
+];
+
+function stylesForVoice() {
+  return TTS_STYLES;
+}
+
+function orderedVoices(voices) {
+  const byId = new Map(voices.map((item) => [item.shortName, item]));
+  const popular = POPULAR_TTS_VOICES.filter((item) => byId.has(item.shortName)).map((item) => ({ ...byId.get(item.shortName), character: item.character, localName: item.localName }));
+  return popular.concat(voices.filter((item) => !popular.some((popularVoice) => popularVoice.shortName === item.shortName)));
+}
+
 function voiceLabel(voice) {
+  const popular = POPULAR_TTS_VOICES.find((item) => item.shortName === voice.shortName);
+  if (popular) return `${popular.localName} ${popular.shortName.split("-").pop().replace("Neural", "")} (${popular.gender === "Male" ? "男声" : "女声"}·${popular.character})`;
   const gender = voice.gender === "Male" ? "男" : voice.gender === "Female" ? "女" : voice.gender;
   return `${voice.localName || voice.shortName} · ${voice.locale}${gender ? ` · ${gender}` : ""}`;
 }
@@ -91,6 +136,10 @@ Page({
     autoSpeak: false,
     avatarEnabled: true,
     ttsVoice: "zh-CN-XiaoxiaoNeural",
+    ttsStyle: "general",
+    ttsStyles: stylesForVoice("zh-CN-XiaoxiaoNeural"),
+    ttsStyleNames: stylesForVoice("zh-CN-XiaoxiaoNeural").map((item) => item.name),
+    ttsStyleIndex: 0,
     ttsRate: 0,
     ttsVolume: 0,
     ttsPitch: 0,
@@ -102,6 +151,7 @@ Page({
     ttsPreviewStatus: "",
     ttsPreviewError: false,
     usage: usageDisplay(),
+    avatarName: "桃濑日和 PRO",
   },
 
   onLoad() {
@@ -109,7 +159,13 @@ Page({
   },
 
   onShow() {
-    this.setData({ usage: usageDisplay() });
+    const avatars = require("../../utils/avatars");
+    const selected = avatars.getAvatar(avatars.getSelectedId());
+    this.setData({ usage: usageDisplay(), avatarName: selected ? selected.name : "桃濑日和 PRO" });
+  },
+
+  openAvatarLibrary() {
+    wx.navigateTo({ url: "/packages/avatars/pages/index" });
   },
 
   onUnload() {
@@ -133,7 +189,9 @@ Page({
     const imageModels = settings.useSeparateServices
       ? (separateImageModels.image.length ? separateImageModels.image : separateImageModels.all)
       : models.image;
-    const ttsVoices = settings.ttsVoices.length ? settings.ttsVoices : FALLBACK_TTS_VOICES;
+    const ttsVoices = orderedVoices(settings.ttsVoices.length ? settings.ttsVoices : FALLBACK_TTS_VOICES);
+    const ttsStyles = stylesForVoice(settings.ttsVoice);
+    const ttsStyleIndex = Math.max(0, ttsStyles.findIndex((item) => item.id === settings.ttsStyle));
     this.setData({
       profileId: settings.profileId,
       profileName: settings.profileName,
@@ -165,6 +223,10 @@ Page({
       autoSpeak: settings.autoSpeak,
       avatarEnabled: settings.avatarEnabled,
       ttsVoice: settings.ttsVoice,
+      ttsStyle: ttsStyles[ttsStyleIndex].id,
+      ttsStyles,
+      ttsStyleNames: ttsStyles.map((item) => item.name),
+      ttsStyleIndex,
       ttsRate: settings.ttsRate,
       ttsVolume: settings.ttsVolume,
       ttsPitch: settings.ttsPitch,
@@ -274,7 +336,18 @@ Page({
     this.stopTtsPreview();
     const index = Number(event.detail.value);
     const voice = this.data.ttsVoices[index];
-    if (voice) this.setData({ ttsVoiceIndex: index, ttsVoice: voice.shortName });
+    if (voice) {
+      const ttsStyles = stylesForVoice(voice.shortName);
+      this.setData({ ttsVoiceIndex: index, ttsVoice: voice.shortName, ttsStyle: "general",
+        ttsStyles, ttsStyleNames: ttsStyles.map((item) => item.name), ttsStyleIndex: 0 });
+    }
+  },
+
+  selectTtsStyle(event) {
+    this.stopTtsPreview();
+    const index = Number(event.detail.value);
+    const style = this.data.ttsStyles[index];
+    if (style) this.setData({ ttsStyleIndex: index, ttsStyle: style.id });
   },
 
   async previewTtsVoice() {
@@ -287,6 +360,7 @@ Page({
       session.request = synthesizeSpeech({
         text: TTS_PREVIEW_TEXT,
         voice: this.data.ttsVoice,
+        style: this.data.ttsStyle,
         rate: this.data.ttsRate,
         volume: this.data.ttsVolume,
         pitch: this.data.ttsPitch,
@@ -443,14 +517,20 @@ Page({
     const operation = listTtsVoices();
     this._voiceRequest = operation;
     try {
-      const voices = await operation.promise;
+      const voices = orderedVoices(await operation.promise);
       const index = Math.max(0, voices.findIndex((item) => item.shortName === this.data.ttsVoice));
       if (voices[index] && voices[index].shortName !== this.data.ttsVoice) this.stopTtsPreview();
+      const ttsStyles = stylesForVoice(voices[index] ? voices[index].shortName : this.data.ttsVoice);
+      const ttsStyleIndex = Math.max(0, ttsStyles.findIndex((item) => item.id === this.data.ttsStyle));
       this.setData({
         ttsVoices: voices,
         ttsVoiceNames: voices.map(voiceLabel),
         ttsVoiceIndex: index,
         ttsVoice: voices[index] ? voices[index].shortName : this.data.ttsVoice,
+        ttsStyle: ttsStyles[ttsStyleIndex].id,
+        ttsStyles,
+        ttsStyleNames: ttsStyles.map((item) => item.name),
+        ttsStyleIndex,
       });
       wx.showToast({ title: `已获取 ${voices.length} 个人声`, icon: "none" });
     } catch (error) {
@@ -494,6 +574,7 @@ Page({
       autoSpeak: this.data.autoSpeak,
       avatarEnabled: this.data.avatarEnabled,
       ttsVoice: this.data.ttsVoice,
+      ttsStyle: this.data.ttsStyle,
       ttsRate: this.data.ttsRate,
       ttsVolume: this.data.ttsVolume,
       ttsPitch: this.data.ttsPitch,

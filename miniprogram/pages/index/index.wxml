@@ -29,12 +29,13 @@
   </view>
 
   <view wx:if="{{avatarEnabled && mode === 'chat'}}" class="interactive-stage">
-    <view class="interactive-presence"><view class="presence-dot"></view><text>小弥 · {{avatarFailed ? '加载失败' : !avatarReady ? '正在加载' : speaking ? '正在朗读' : avatarState === 'thinking' ? '正在思考' : avatarState === 'answering' ? '正在回答' : '在线'}}</text></view>
+    <view class="interactive-presence"><view class="presence-dot"></view><text>{{avatarName}} · {{avatarFailed ? '加载失败' : !avatarReady ? '正在加载' : speaking ? '正在朗读' : avatarState === 'thinking' ? '正在思考' : avatarState === 'answering' ? '正在回答' : '在线'}}</text></view>
     <live2d-avatar
       class="live2d-avatar"
       active="{{!keyboardVisible}}"
       state="{{avatarState}}"
       speaking="{{speaking}}"
+      model="{{avatarModel}}"
       bindready="onAvatarReady"
       bindinteract="onAvatarInteract"
       binderror="onAvatarError"
@@ -47,7 +48,7 @@
       </scroll-view>
       <scroll-view wx:else class="dialog-scroll" scroll-y show-scrollbar="{{false}}" scroll-into-view="{{stageScrollTarget}}">
         <view class="dialog-turn assistant-turn">
-          <text class="dialog-role">小弥</text><text class="dialog-text" user-select>{{stageMessage ? (stageDisplayText || (stageMessage.pending ? '正在思考…' : '')) : '你好，今天想聊些什么？'}}</text>
+          <text class="dialog-role">{{avatarName}}</text><text class="dialog-text" user-select>{{stageMessage ? (stageDisplayText || (stageMessage.pending ? '正在思考…' : '')) : '你好，今天想聊些什么？'}}</text>
         </view>
         <button wx:if="{{stageMessage && stageMessage.imageUrl}}" class="interactive-image-link" data-url="{{stageMessage.imageUrl}}" bindtap="previewImage">查看生成图片</button>
         <view id="stage-reply-bottom" class="scroll-end-anchor"></view><view id="stage-reply-bottom-alt" class="scroll-end-anchor"></view>

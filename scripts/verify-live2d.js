@@ -5,11 +5,12 @@ const assert = require("node:assert/strict");
 // Pass a local Playwright installation path when it is not installed in NING.
 const { chromium } = require(process.argv[2] || "playwright");
 const root = path.resolve(__dirname, "..");
+const { decompress } = require(path.join(root, "miniprogram/components/live2d-avatar/lz4"));
 const output = path.join(root, "artifacts/live2d");
 fs.mkdirSync(output, { recursive: true });
 
 async function verify() {
-  const browser = await chromium.launch({ headless: true });
+  const browser = await chromium.launch({ headless: true, ...(process.argv[3] ? { executablePath: process.argv[3] } : {}) });
   const result = [];
   try {
     for (const [width, height] of [[375, 812], [320, 568], [430, 932], [1024, 768]]) {
@@ -39,8 +40,11 @@ async function verify() {
       await page.addScriptTag({ path: path.join(root, "miniprogram/components/live2d-avatar/renderer.js") });
       const assetRoot = path.join(root, "miniprogram/assets/live2d/hiyori");
       const inputs = {
-        model: require(path.join(assetRoot, "model-data.js")),
-        textures: ["texture_00.png", "texture_01.png"].map((file) => `data:image/png;base64,${fs.readFileSync(path.join(assetRoot, file)).toString("base64")}`),
+        model: (() => {
+          const packed = require(path.join(assetRoot, "model-data.js"));
+          return Buffer.from(decompress(Buffer.from(packed.data, "base64"), packed.size)).toString("base64");
+        })(),
+        textures: ["texture_00-512.png", "texture_01-512.png"].map((file) => `data:image/png;base64,${fs.readFileSync(path.join(assetRoot, file)).toString("base64")}`),
       };
       const stats = await page.evaluate(async ({ model, textures }) => {
         const canvas = document.getElementById("avatar");

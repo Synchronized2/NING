@@ -7,7 +7,13 @@
 - Source: https://www.live2d.com/zh-CHS/download/sample-data/
 - The original Chinese readme is retained at `miniprogram/assets/live2d/hiyori/ReadMe.txt`.
 - The model is not MIT-licensed. Individuals and qualifying small businesses may use it commercially only subject to Live2D's sample model terms; other restrictions may apply.
-- The original `.moc3` is retained unchanged at `assets/live2d/hiyori_pro_t11.moc3`. The Mini Program imports a lossless Base64 JavaScript module generated from those bytes, avoiding package file-system reads. The two textures are resized from 2048 to 768 pixels for the WeChat Mini Program package.
+- The original `.moc3` is retained unchanged at `assets/live2d/hiyori_pro_t11.moc3`. The Mini Program imports a losslessly compressed JavaScript module generated from those bytes, avoiding package file-system reads. The two textures are resized from 2048 to 512 pixels as transparent RGBA PNGs for the WeChat Mini Program package.
+
+## Additional Mira-Companion character assets
+
+- Source: `D:\gitlab\OpenAIQ\Mira-Companion/public/assets/characters` and its `shared/characters.json` catalog.
+- The 49 downloadable Cubism 3 models are intended for the owner's CloudBase project for authorized personal testing; model and texture files are not copied into this Git repository or Mini Program package. Fifty resized character previews are included in the Mini Program's avatar subpackage for browsing before download.
+- Their individual authors and permissions vary. Confirm distribution and cloud-access scope against the permissions granted for each model before allowing other users to download them.
 
 ## Live2D Cubism Core
 

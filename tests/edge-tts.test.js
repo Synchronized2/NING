@@ -1,7 +1,15 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
 const { EventEmitter } = require("node:events");
-const { createEdgeSynthesizer } = require("../cloudfunctions/openaiProxy/edge-tts");
+const { createEdgeSynthesizer, buildSsml } = require("../cloudfunctions/openaiProxy/edge-tts");
+
+test("Edge style presets use supported prosody and never send unsupported express-as markup", () => {
+  const ssml = buildSsml("你好 <世界>", "zh-CN-XiaoxiaoNeural", { style: "chat", rate: 10, pitch: 3 });
+  assert.match(ssml, /pitch="\+5Hz" rate="\+15%"/);
+  assert.match(ssml, /你好 &lt;世界&gt;/);
+  assert.doesNotMatch(ssml, /express-as/);
+  assert.throws(() => buildSsml("你好", "voice", { style: "<invalid>" }), /不支持的语音风格/);
+});
 
 function audioFrame(audio, headers = "Path:audio\r\nContent-Type:audio/mpeg\r\n") {
   const header = Buffer.from(headers);

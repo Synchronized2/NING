@@ -59,9 +59,19 @@ function createProgram(gl) {
   return program;
 }
 
-function loadTexture(canvas, gl, source) {
+function loadTexture(canvas, gl, source, timeoutMs = 8000) {
   return new Promise((resolve, reject) => {
     const image = canvas.createImage();
+    let settled = false;
+    const complete = (done, value) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timeout);
+      image.onload = null;
+      image.onerror = null;
+      done(value);
+    };
+    const timeout = setTimeout(() => complete(reject, new Error(`人物纹理加载超时：${source}`)), timeoutMs);
     image.onload = () => {
       try {
         const texture = gl.createTexture();
@@ -73,12 +83,12 @@ function loadTexture(canvas, gl, source) {
         gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
         gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
         gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, image);
-        resolve(texture);
+        complete(resolve, texture);
       } catch (error) {
-        reject(error);
+        complete(reject, error);
       }
     };
-    image.onerror = () => reject(new Error(`无法加载人物纹理：${source}`));
+    image.onerror = () => complete(reject, new Error(`无法加载人物纹理：${source}`));
     image.src = source;
   });
 }
@@ -115,9 +125,9 @@ function blinkValue(timeSeconds) {
   return 1;
 }
 
-function initializePose(model) {
+function initializePose(model, groups = POSE_GROUPS) {
   // Core starts both alternative arms opaque. The sample pose selects the first.
-  for (const group of POSE_GROUPS) {
+  for (const group of groups) {
     group.forEach((partId, index) => {
       const opacity = index === 0 ? 1 : 0;
       const partIndex = model.parts.ids.indexOf(partId);
@@ -168,6 +178,7 @@ class Live2DRenderer {
     this.gl = options.gl;
     this.modelBuffer = options.modelBuffer;
     this.textureSources = options.textureSources;
+    this.poseGroups = options.poseGroups === undefined ? POSE_GROUPS : options.poseGroups;
     this.width = options.width;
     this.height = options.height;
     this.state = "idle";
@@ -199,10 +210,19 @@ class Live2DRenderer {
     this.uvBuffer = gl.createBuffer();
     this.indexBuffer = gl.createBuffer();
     this.moc = runtime.Moc.fromArrayBuffer(this.modelBuffer);
-    if (!this.moc) throw new Error("无法读取 Live2D 模型");
+    if (!this.moc) {
+      await new Promise((resolve) => setTimeout(resolve, 250));
+      if (this.destroyed) return this;
+      this.moc = runtime.Moc.fromArrayBuffer(this.modelBuffer);
+    }
+    if (!this.moc) {
+      const bytes = new Uint8Array(this.modelBuffer);
+      const header = Array.from(bytes.subarray(0, 4), (value) => String.fromCharCode(value)).join("");
+      throw new Error(`Cubism Core 无法读取模型（${bytes.length} 字节，${header || "无文件头"}）`);
+    }
     this.model = runtime.Model.fromMoc(this.moc);
     if (!this.model) throw new Error("无法创建 Live2D 模型");
-    initializePose(this.model);
+    initializePose(this.model, this.poseGroups);
     this.model.update();
     this.parameterIndex = new Map();
     for (let index = 0; index < this.model.parameters.count; index += 1) {
@@ -390,6 +410,7 @@ class Live2DRenderer {
 
 module.exports = {
   Live2DRenderer,
+  loadTexture,
   blinkValue,
   initializePose,
   fullBodyTransform,

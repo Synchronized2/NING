@@ -42,6 +42,7 @@ test("every WXML event handler exists on its page definition", () => {
     ["miniprogram/pages/index/index.js", "miniprogram/pages/index/index.wxml"],
     ["miniprogram/pages/history/history.js", "miniprogram/pages/history/history.wxml"],
     ["miniprogram/pages/settings/settings.js", "miniprogram/pages/settings/settings.wxml"],
+    ["miniprogram/packages/avatars/pages/index.js", "miniprogram/packages/avatars/pages/index.wxml"],
   ];
   pages.forEach(([jsPath, wxmlPath]) => {
     const page = loadPage(jsPath);

@@ -51,6 +51,7 @@ function normalizeSettings(saved = {}) {
     autoSpeak: saved.autoSpeak === true,
     avatarEnabled: saved.avatarEnabled !== false,
     ttsVoice: String(saved.ttsVoice || "zh-CN-XiaoxiaoNeural"),
+    ttsStyle: String(saved.ttsStyle || "general"),
     ttsRate: Math.max(-100, Math.min(200, Number(saved.ttsRate) || 0)),
     ttsVolume: Math.max(-100, Math.min(100, Number(saved.ttsVolume) || 0)),
     ttsPitch: Math.max(-100, Math.min(100, Number(saved.ttsPitch) || 0)),

@@ -4,6 +4,9 @@ const fs = require("node:fs");
 const path = require("node:path");
 const vm = require("node:vm");
 const root = path.resolve(__dirname, "..");
+const modelData = require("../miniprogram/assets/live2d/hiyori/model-data");
+const { decompress, crc32 } = require("../miniprogram/components/live2d-avatar/lz4");
+const modelBytes = () => Buffer.from(decompress(Buffer.from(modelData.data, "base64"), modelData.size));
 
 test("Cubism Core and model work without DOM, atob, WebAssembly or eval", async () => {
   const sandbox = {
@@ -20,8 +23,7 @@ test("Cubism Core and model work without DOM, atob, WebAssembly or eval", async 
   await new Promise((resolve) => setTimeout(resolve, 25));
   const core = sandbox.module.exports.Live2DCubismCore;
   assert.ok(core.Version.csmGetVersion() > 0);
-  const modelData = require("../miniprogram/assets/live2d/hiyori/model-data");
-  const moc = core.Moc.fromArrayBuffer(sandbox.wx.base64ToArrayBuffer(modelData));
+  const moc = core.Moc.fromArrayBuffer(decompress(sandbox.wx.base64ToArrayBuffer(modelData.data), modelData.size));
   assert.ok(moc);
   const model = core.Model.fromMoc(moc);
   assert.ok(model.drawables.count > 10);
@@ -42,11 +44,17 @@ test("blink function closes and reopens eyes", () => {
   assert.equal(blinkValue(4.35), 1);
 });
 
+test("a stalled texture reports an error instead of leaving the avatar loading forever", async () => {
+  const { loadTexture } = require("../miniprogram/components/live2d-avatar/renderer");
+  const canvas = { createImage: () => ({}) };
+  await assert.rejects(loadTexture(canvas, {}, "texture.png", 5), /人物纹理加载超时：texture\.png/);
+});
+
 test("Hiyori pose hides alternative arms throughout idle, chat, speech and touch", async () => {
   const core = require("../miniprogram/vendor/live2d/live2dcubismcore.min.js").Live2DCubismCore;
   const { Live2DRenderer, initializePose, waitForRuntime } = require("../miniprogram/components/live2d-avatar/renderer");
   await waitForRuntime();
-  const bytes = Buffer.from(require("../miniprogram/assets/live2d/hiyori/model-data"), "base64");
+  const bytes = modelBytes();
   const moc = core.Moc.fromArrayBuffer(bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength));
   const model = core.Model.fromMoc(moc);
   try {
@@ -87,7 +95,7 @@ test("full-body fitting keeps all visible geometry inside the stage", async () =
   const core = require("../miniprogram/vendor/live2d/live2dcubismcore.min.js").Live2DCubismCore;
   const { fullBodyTransform, initializePose, waitForRuntime } = require("../miniprogram/components/live2d-avatar/renderer");
   await waitForRuntime();
-  const bytes = Buffer.from(require("../miniprogram/assets/live2d/hiyori/model-data"), "base64");
+  const bytes = modelBytes();
   const moc = core.Moc.fromArrayBuffer(bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength));
   const model = core.Model.fromMoc(moc);
   try {
@@ -116,7 +124,7 @@ test("portrait view keeps the head visible and zooms beyond the full-body view",
   const core = require("../miniprogram/vendor/live2d/live2dcubismcore.min.js").Live2DCubismCore;
   const { fullBodyTransform, portraitTransform, initializePose, waitForRuntime } = require("../miniprogram/components/live2d-avatar/renderer");
   await waitForRuntime();
-  const bytes = Buffer.from(require("../miniprogram/assets/live2d/hiyori/model-data"), "base64");
+  const bytes = modelBytes();
   const moc = core.Moc.fromArrayBuffer(bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength));
   const model = core.Model.fromMoc(moc);
   try {
@@ -156,9 +164,24 @@ test("packaged model loads without any file-system access and preserves source b
     assert.deepEqual(actual, source);
     assert.equal(actual.subarray(0, 4).toString(), "MOC3");
     const component = fs.readFileSync(path.join(root, "miniprogram/components/live2d-avatar/index.js"), "utf8");
-    assert.doesNotMatch(component, /readFile|MODEL_PATHS/);
+    assert.match(component, /loadModelBuffer\(\)/);
+    assert.match(component, /selected\.modelPath/);
   } finally {
     global.wx = previousWx;
+  }
+});
+
+test("bundled model retains source bytes and textures retain transparency", () => {
+  const original = fs.readFileSync(path.join(root, "assets/live2d/hiyori_pro_t11.moc3"));
+  assert.deepEqual(modelBytes(), original);
+  assert.equal(crc32(modelBytes()), modelData.crc32);
+  assert.throws(() => decompress(Buffer.from(modelData.data, "base64").subarray(0, 100), modelData.size));
+  for (const name of ["texture_00-512.png", "texture_01-512.png"]) {
+    const png = fs.readFileSync(path.join(root, "miniprogram/assets/live2d/hiyori", name));
+    assert.equal(png.readUInt32BE(16), 512);
+    assert.equal(png.readUInt32BE(20), 512);
+    assert.equal(png[25], 6, "PNG must retain RGBA color");
+    assert.ok(png.length < 200000, `${name} exceeds the WeChat 200 K resource limit`);
   }
 });
 
@@ -174,6 +197,17 @@ test("Live2D component event handlers and cleanup hooks exist", () => {
   assert.equal(typeof definition.lifetimes.detached, "function");
   assert.equal(typeof definition.pageLifetimes.hide, "function");
   assert.equal(definition.data.viewMode, "portrait");
+  let restarts = 0;
+  const observerContext = {
+    _ready: true,
+    dispose() { restarts++; },
+    initialize() { restarts++; },
+  };
+  definition.methods.onModelChange.call(observerContext, null, null);
+  definition.methods.onModelChange.call(observerContext, null, undefined);
+  assert.equal(restarts, 0, "repeated built-in model values must not interrupt loading");
+  definition.methods.onModelChange.call(observerContext, { modelPath: "new.moc3" }, null);
+  assert.equal(restarts, 2);
   let canceled = false, destroyed = false;
   const context = {
     _frame: 1,
@@ -196,10 +230,13 @@ test("interaction preference is included in settings collection", () => {
   assert.equal(definition.collectSettings.call({ data }).avatarEnabled, false);
 });
 
-test("bundled Mini Program stays below the two MiB main-package limit", () => {
+test("bundled Mini Program main package stays below 1.5 MB", () => {
   const bytes = (directory) => fs.readdirSync(directory, { withFileTypes: true }).reduce((total, entry) => {
     const target = path.join(directory, entry.name);
     return total + (entry.isDirectory() ? bytes(target) : fs.statSync(target).size);
   }, 0);
-  assert.ok(bytes(path.join(root, "miniprogram")) < 2 * 1024 * 1024);
+  const miniprogram = path.join(root, "miniprogram");
+  const avatars = path.join(miniprogram, "packages", "avatars");
+  assert.ok(bytes(miniprogram) - bytes(avatars) < 1500000, "main package exceeds 1.5 MB");
+  assert.ok(bytes(avatars) < 2 * 1024 * 1024, "avatar subpackage exceeds 2 MiB");
 });

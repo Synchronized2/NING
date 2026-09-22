@@ -218,7 +218,8 @@ test("Edge TTS does not send model URL or API key", async () => {
   };
   const operation = synthesizeSpeech({ text: "你好", voice: "zh-CN-XiaoxiaoNeural" });
   assert.equal((await operation.promise).fileId, "cloud://tts/test.mp3");
-  assert.deepEqual(Object.keys(requestData).sort(), ["action", "pitch", "rate", "text", "voice", "volume"]);
+  assert.deepEqual(Object.keys(requestData).sort(), ["action", "pitch", "rate", "style", "text", "voice", "volume"]);
+  assert.equal(requestData.style, "general");
   assert.equal(requestData.action, "tts");
   delete global.wx;
 });

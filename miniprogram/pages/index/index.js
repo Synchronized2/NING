@@ -20,6 +20,7 @@ const {
   saveSettings,
 } = require("../../utils/storage");
 const { createWebRtcVad, UtteranceCollector, transcribeWav, startPcmCapture, FRAME_BYTES } = require("../../utils/voice");
+const avatars = require("../../utils/avatars");
 
 const IMAGE_TOOL = {
   type: "function",
@@ -160,6 +161,8 @@ Page({
     avatarState: "idle",
     avatarReady: false,
     avatarFailed: false,
+    avatarModel: null,
+    avatarName: "小弥",
     stageMessage: null,
     stageUserMessage: null,
     stageDisplayText: "",
@@ -217,9 +220,33 @@ Page({
     }
     this.setData(updates);
     if (!settings.avatarEnabled) this.stopVoiceCapture();
+    this.refreshAvatar();
+    clearTimeout(this._avatarReadyTimer);
+    if (settings.avatarEnabled && !this.data.avatarReady) {
+      this._avatarReadyTimer = setTimeout(() => {
+        if (!this._unloaded && this.data.avatarEnabled && !this.data.avatarReady) {
+          this.setData({ avatarFailed: true });
+          console.warn("Live2D avatar initialization did not complete");
+        }
+      }, 20000);
+    }
+  },
+
+  async refreshAvatar() {
+    const current = (this._avatarLoadVersion || 0) + 1;
+    this._avatarLoadVersion = current;
+    const selected = avatars.getAvatar(avatars.getSelectedId());
+    if (!selected || selected.builtIn) {
+      this.setData({ avatarModel: null, avatarName: "小弥" });
+      return;
+    }
+    const model = await avatars.getActiveModel();
+    if (this._unloaded || this._avatarLoadVersion !== current) return;
+    this.setData({ avatarModel: model, avatarName: model ? selected.name : "小弥" });
   },
 
   onHide() {
+    clearTimeout(this._avatarReadyTimer);
     this._keyboardHeight = 0;
     this.stopVoiceCapture();
   },
@@ -233,6 +260,7 @@ Page({
 
   onUnload() {
     this._unloaded = true;
+    clearTimeout(this._avatarReadyTimer);
     this.abortActiveRequest();
     this.stopSpeech();
     this.stopVoiceCapture();
@@ -458,12 +486,18 @@ Page({
   },
 
   onAvatarReady() {
+    clearTimeout(this._avatarReadyTimer);
     this.setData({ avatarReady: true, avatarFailed: false });
   },
 
   onAvatarError(event) {
+    clearTimeout(this._avatarReadyTimer);
     this.setData({ avatarReady: false, avatarFailed: true });
     console.warn("Live2D avatar unavailable", event && event.detail);
+    if (this.data.avatarModel) {
+      avatars.setSelectedId("hiyori");
+      this.setData({ avatarModel: null, avatarName: "小弥" });
+    }
   },
 
   onInput(event) {
@@ -923,6 +957,7 @@ Page({
       job.request = synthesizeSpeech({
         text: job.text,
         voice: session.settings.ttsVoice,
+        style: session.settings.ttsStyle,
         rate: session.settings.ttsRate,
         volume: session.settings.ttsVolume,
         pitch: session.settings.ttsPitch,
@@ -1048,7 +1083,8 @@ Page({
     try {
       session.request = synthesizeSpeech({
         text,
-        voice: settings.ttsVoice,
+      voice: settings.ttsVoice,
+      style: settings.ttsStyle,
         rate: settings.ttsRate,
         volume: settings.ttsVolume,
         pitch: settings.ttsPitch,

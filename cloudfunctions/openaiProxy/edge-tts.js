@@ -5,6 +5,13 @@ const EDGE_VOICES_URL = `https://speech.platform.bing.com/consumer/speech/synthe
 const EDGE_TTS_URL = "wss://speech.platform.bing.com/consumer/speech/synthesize/readaloud/edge/v1";
 const EDGE_CHROMIUM_VERSION = "143.0.3650.75";
 const EDGE_GEC_VERSION = "1-143.0.3650";
+const EDGE_STYLES = new Set(["general", "assistant", "chat", "customerservice", "newscast", "affectionate", "calm", "cheerful", "gentle", "lyrical", "serious"]);
+const STYLE_PROSODY = {
+  general: [0, 0, 0], assistant: [-5, 5, 0], chat: [5, 2, 0],
+  customerservice: [-8, 3, 0], newscast: [0, -5, 5], affectionate: [-10, 6, 0],
+  calm: [-15, -2, 0], cheerful: [10, 8, 0], gentle: [-10, 2, 0],
+  lyrical: [-12, 4, 0], serious: [-8, -6, 0],
+};
 
 function escapeSsml(value) {
   return String(value).replace(/&/g, "&amp;").replace(/</g, "&lt;")
@@ -14,6 +21,14 @@ function escapeSsml(value) {
 function signed(value, min, max, unit) {
   const number = Math.max(min, Math.min(max, Number(value) || 0));
   return `${number >= 0 ? "+" : ""}${number}${unit}`;
+}
+
+function buildSsml(text, voice, options = {}) {
+  const style = String(options.style || "general");
+  if (!EDGE_STYLES.has(style)) throw new Error("不支持的语音风格");
+  const [rate, pitch, volume] = STYLE_PROSODY[style];
+  const prosody = `<prosody pitch="${signed((Number(options.pitch) || 0) + pitch, -100, 100, "Hz")}" rate="${signed((Number(options.rate) || 0) + rate, -100, 200, "%")}" volume="${signed((Number(options.volume) || 0) + volume, -100, 100, "%")}">${escapeSsml(text)}</prosody>`;
+  return `<speak version="1.0" xmlns="http://www.w3.org/2001/10/synthesis" xml:lang="zh-CN"><voice name="${escapeSsml(voice)}">${prosody}</voice></speak>`;
 }
 
 function edgeGec() {
@@ -80,7 +95,7 @@ function createEdgeSynthesizer({ WebSocket, setTimer = setTimeout, clearTimer = 
           const onSent = (error) => { if (error) finish(new Error(`Edge TTS 发送失败：${String(error.message || error).slice(0, 200)}`)); };
           socket.send(`X-Timestamp:${timestamp}\r\nContent-Type:application/json; charset=utf-8\r\nPath:speech.config\r\n\r\n${JSON.stringify({ context: { synthesis: { audio: { metadataoptions: { sentenceBoundaryEnabled: false, wordBoundaryEnabled: false }, outputFormat: "audio-24khz-48kbitrate-mono-mp3" } } } })}`, onSent);
           if (settled) return;
-          const ssml = `<speak version="1.0" xmlns="http://www.w3.org/2001/10/synthesis" xml:lang="zh-CN"><voice name="${escapeSsml(voice)}"><prosody pitch="${signed(options.pitch, -100, 100, "Hz")}" rate="${signed(options.rate, -100, 200, "%")}" volume="${signed(options.volume, -100, 100, "%")}">${escapeSsml(text)}</prosody></voice></speak>`;
+          const ssml = buildSsml(text, voice, options);
           socket.send(`X-RequestId:${requestId}\r\nContent-Type:application/ssml+xml\r\nX-Timestamp:${timestamp}\r\nPath:ssml\r\n\r\n${ssml}`, onSent);
         } catch (error) { finish(error); }
       });
@@ -109,4 +124,4 @@ function createEdgeSynthesizer({ WebSocket, setTimer = setTimeout, clearTimer = 
 
 const synthesizeEdge = (...args) => createEdgeSynthesizer({ WebSocket: require("ws") })(...args);
 
-module.exports = { EDGE_VOICES_URL, createEdgeSynthesizer, parseBinaryFrame, synthesizeEdge };
+module.exports = { EDGE_VOICES_URL, createEdgeSynthesizer, parseBinaryFrame, synthesizeEdge, buildSsml };

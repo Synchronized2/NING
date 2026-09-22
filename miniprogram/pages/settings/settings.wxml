@@ -96,6 +96,9 @@
       <view class="picker-row"><text>{{ttsVoiceNames[ttsVoiceIndex]}}</text><text class="picker-arrow">›</text></view>
     </picker>
     <text class="voice-id">{{ttsVoice}}</text>
+    <picker mode="selector" range="{{ttsStyleNames}}" value="{{ttsStyleIndex}}" disabled="{{ttsStyles.length <= 1}}" bindchange="selectTtsStyle">
+      <view class="picker-row"><text>语调预设 · {{ttsStyleNames[ttsStyleIndex]}}</text><text class="picker-arrow">›</text></view>
+    </picker>
     <button class="secondary-button voice-button" loading="{{fetchingVoices}}" disabled="{{fetchingVoices}}" bindtap="fetchTtsVoices">
       {{fetchingVoices ? '正在获取人声' : '刷新全部 Edge TTS 人声'}}
     </button>
@@ -130,10 +133,11 @@
     <view class="avatar-summary">
       <view class="avatar-swatch">日</view>
       <view class="avatar-summary-copy">
-        <text class="avatar-name">桃濑日和 PRO</text>
+        <text class="avatar-name">{{avatarName}}</text>
         <text class="avatar-detail">本地运行 · 原生 Canvas/WebGL</text>
       </view>
     </view>
+    <button class="secondary-button" bindtap="openAvatarLibrary">管理人物形象</button>
   </view>
 
   <view class="section">
@@ -185,7 +189,7 @@
     <text class="section-title">关于 NING</text>
     <view class="version-row">
       <text>当前版本</text>
-      <text class="version-value">3.4.3</text>
+      <text class="version-value">3.6.0</text>
     </view>
   </view>
 

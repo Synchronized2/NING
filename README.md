@@ -1,4 +1,4 @@
-# NING 微信小程序 3.4.3
+# NING 微信小程序 3.6.0
 
 一个连接兼容模型服务的微信小程序客户端。用户自行配置服务 URL、API Key 和模型；模型列表、对话、生图和 TTS 均可通过微信云函数中转，无需部署云托管服务。
 
@@ -14,10 +14,11 @@
 - 支持 `b64_json` 与 HTTPS 图片结果，云中转会将结果写入云存储
 - 对话模型可通过 `generate_image` 工具自动触发生图
 - Token、图片和自定义单价费用统计，数据仅保存在本机
-- Edge TTS 手动朗读与自动朗读，可动态拉取全部在线人声并设置语速、音量和音调
+- Edge TTS 手动朗读与自动朗读；常用中文音色优先显示，仍可刷新全部在线人声，并可选择语调预设、语速、音量和音调
 - 原生 Canvas/WebGL Live2D 互动形象，支持眨眼、呼吸、视线跟随、触摸动作、思考/回答状态和 TTS 口型
 - 互动形象开启时自动按句朗读，最多三路并发合成并按顺序播放；人物右上方等待时显示问题，朗读时切换为当前回答，完整问答仍保存在会话历史中
 - 互动模式可切换全身/半身、文字输入和麦克风对话；WebRTC VAD 本地判断说话结束，WAV 上传识别后沿用现有模型对话
+- Hiyori 内置，另有 49 个 Mira Cubism 3 人物可本地预览、通过微信云存储按需下载、离线缓存与切换
 - API 错误脱敏；云函数具备 HTTPS 限制、DNS 固定、重定向限制和 SSRF 防护
 
 ## 从 2.0 升级
@@ -55,6 +56,17 @@
 
 云函数调用不是流式通道，因此云开发模式按完整回答返回。需要逐 Token SSE 时使用直连模式；直连模式已通过 `enableChunked` 实时处理上游 SSE。
 
+## 人物云存储
+
+Mira-Companion 的人物清单有 273 个条目；本阶段只处理其中 50 个 Cubism 3 `.moc3` 条目（含内置 Hiyori）。另外 223 个 Cubism 2 `.moc` 模型不能由当前 Cubism Core 渲染，尚未进入可下载列表。模型和纹理只下载到用户手机，不打包进小程序；50 张缩小的预览图放在独立人物分包中，尚未部署云存储也能浏览。云端素材约 175 MiB，请确认云环境的存储容量和流量额度。
+
+1. 在本机保留 `D:\gitlab\OpenAIQ\Mira-Companion` 素材目录，先运行 `powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/build-avatar-previews.ps1`，再运行 `node scripts/build-avatar-catalog.js`。若路径不同，分别传入脚本的 `-MiraDir` 参数和生成器的第一个参数。脚本生成 50 张本地预览图、小程序人物清单和被忽略的 `artifacts/avatars/upload-plan.json`，并校验源文件路径和哈希。
+2. 在本机配置 `TCB_ENV=cloudbase-d2gg15kzjf02a74ab`、`TENCENTCLOUD_SECRETID` 和 `TENCENTCLOUD_SECRETKEY` 环境变量。不要把凭据写入仓库或发给他人；账号需要当前环境的云存储上传权限。
+3. 运行 `node scripts/upload-avatar-models.js`。脚本逐项上传 182 个版本化文件并核对返回的 fileID；全部成功才会更新 `miniprogram/utils/avatar-cloud-config.js`。中途失败可以重新运行，尚未完成时小程序继续只使用内置 Hiyori。
+4. 在云开发控制台将 `ning/avatars/v1/` 下的素材设置为小程序用户可读、仅管理端可写；编译、真机测试并上传新的小程序代码。设置页的“管理人物形象”可预览、下载、使用或删除本地模型。
+
+小程序从人物分包显示缩略图，通过 `wx.cloud.downloadFile` 下载模型，不需要配置自有服务器域名。下载时核对文件大小及 SHA-1，全部文件就绪后才标记为已安装；当前选中模型损坏或加载失败会切回 Hiyori。更换素材后重新生成预览图与清单并上传，文件路径中的内容版本会避免旧缓存混用。完成部署前云端模型按钮保持禁用，不影响现有对话、生图和内置人物。
+
 ## 数据与隐私
 
 - API Key 和服务档案保存在微信本地 Storage，不写入云数据库的档案数据。
@@ -65,6 +77,7 @@
 - TTS 临时音频播放结束后由客户端删除。
 - 互动语音录音只在点击麦克风后开始；WebRTC VAD 在本地处理 PCM，录音结束后临时 WAV 发往 `tools.yeyupiaoling.cn` 做识别，识别或取消后删除本地文件。该接口为第三方非官方服务，可能变更或不可用。
 - Edge TTS 使用 Microsoft Edge Read Aloud 的非官方公共接口，不需要 Key，但协议或可用性可能变化，不应作为强 SLA 服务。
+- Edge 公共接口不接受 Azure 的原生情感 `express-as` 标签；语音风格是经过在线合成验证的语速、音调、音量预设，不是 Azure 情感模型。
 - 用量与费用为本地统计；费用仅按用户填写单价估算，实际账单以上游服务为准。
 
 ## 项目结构
@@ -72,19 +85,20 @@
 - `miniprogram/pages/index`：对话、生图、多模态输入和朗读
 - `miniprogram/pages/history`：多会话管理
 - `miniprogram/pages/settings`：服务档案、模型、价格和 TTS 设置
+- `miniprogram/packages/avatars`：人物分包、预览图、下载与切换
 - `miniprogram/components/live2d-avatar`：小程序原生 WebGL 渲染、互动与生命周期管理
 - `miniprogram/assets/live2d/hiyori`：桃濑日和 PRO 模型、移动端纹理及原始授权说明
 - `miniprogram/vendor/live2d`：Live2D Cubism Core 运行库
+- `miniprogram/utils/avatars.js`：人物云文件、校验、本地缓存与选择
 - `miniprogram/utils/openai.js`：兼容模型协议、媒体上传、SSE 与 Edge TTS 客户端调用
 - `miniprogram/utils/voice.js`：WebRTC VAD、PCM 语句收集、WAV 封装与第三方语音识别
 - `miniprogram/utils/storage.js`：2.0 数据迁移、多会话、服务档案和用量
 - `cloudfunctions/openaiProxy`：模型、对话、生图、媒体处理与 Edge TTS 安全中转
-- `cloudrun/image-service`：已停用的异步生图方案，仅保留为历史参考，不参与小程序运行
 - `tests`：协议、页面绑定、安全和存储迁移测试
 
 Live2D 人物全部在本地渲染，不上传用户数据，也不依赖云函数或模型服务。人物素材和 Cubism Core 适用各自授权，详见 `THIRD_PARTY_NOTICES.md`。
 
-模型二进制原件保存在 `assets/live2d`，小程序通过 `model-data.js` 模块加载，不使用文件系统读取包内 `.moc3`。更换模型原件后执行 `node scripts/build-live2d-model.js` 重新生成模块；生成文件必须随小程序一起上传。
+内置 Hiyori 的二进制原件保存在 `assets/live2d`，小程序通过无损压缩的 `model-data.js` 模块加载；更换该原件后执行 `node scripts/build-live2d-model.js`。透明纹理由 `powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/build-live2d-textures.ps1 -Size 512` 从 Mira 原件生成。云端人物的 `.moc3` 和纹理按需下载到本地目录后读取，不占小程序代码包大小。
 
 ## 测试
 

@@ -1,6 +1,6 @@
 {
   "name": "openai-proxy",
-  "version": "3.4.3",
+  "version": "3.6.0",
   "private": true,
   "main": "index.js",
   "dependencies": {

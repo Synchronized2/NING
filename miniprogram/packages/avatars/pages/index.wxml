@@ -1,0 +1,36 @@
+<view class="avatar-page">
+  <view class="avatar-preview" bindtap="previewAvatar">
+    <image wx:if="{{focused && focused.preview}}" src="{{focused.preview}}" mode="aspectFit" />
+    <text wx:else class="preview-initial">{{focused ? focused.initial : '日'}}</text>
+  </view>
+  <view class="avatar-detail">
+    <view class="detail-copy">
+      <text class="detail-name">{{focused.name}}</text>
+      <text class="detail-meta">{{focused.family}} · {{focused.sizeText}}</text>
+    </view>
+    <text wx:if="{{focused.id === selectedId}}" class="current-label">使用中</text>
+    <button wx:elif="{{focused.installed}}" class="primary-action" bindtap="useAvatar">使用</button>
+    <button wx:else class="primary-action" disabled="{{!cloudReady || busyId !== ''}}" bindtap="downloadAvatar">{{busyId === focused.id ? '下载中' : '下载'}}</button>
+  </view>
+  <view wx:if="{{focused.installed && !focused.builtIn && focused.id !== selectedId}}" class="detail-tools">
+    <button bindtap="removeAvatar">删除本地文件</button>
+  </view>
+  <view wx:if="{{busyId}}" class="download-progress"><progress percent="{{progress}}" activeColor="#197a62" stroke-width="4" /><text>{{progress}}%</text></view>
+  <text wx:if="{{status}}" class="avatar-notice">{{status}}</text>
+  <text wx:if="{{!cloudReady}}" class="avatar-notice">云端人物素材尚未部署，当前可使用内置的 Hiyori。</text>
+  <view class="browse-tools">
+    <input class="search-input" value="{{searchValue}}" bindinput="onSearch" placeholder="搜索人物" />
+    <picker mode="selector" range="{{families}}" value="{{familyIndex}}" bindchange="onFamilyChange">
+      <view class="family-picker">{{families[familyIndex]}} ▾</view>
+    </picker>
+  </view>
+  <scroll-view class="avatar-list" scroll-y show-scrollbar="{{false}}">
+    <view wx:for="{{visibleAvatars}}" wx:key="id" class="avatar-row {{focusedId === item.id ? 'focused' : ''}}" data-id="{{item.id}}" bindtap="focusAvatar" hover-class="avatar-row-hover" role="button" aria-label="{{item.name}}">
+      <image wx:if="{{item.preview}}" class="row-image" src="{{item.preview}}" mode="aspectFit" />
+      <view wx:else class="row-initial">{{item.initial}}</view>
+      <view class="row-copy"><text class="row-name">{{item.name}}</text><text class="row-meta">{{item.family}} · {{item.sizeText}}</text></view>
+      <text class="row-status">{{item.id === selectedId ? '使用中' : item.installed ? '已下载' : ''}}</text>
+    </view>
+    <view class="list-end"></view>
+  </scroll-view>
+</view>

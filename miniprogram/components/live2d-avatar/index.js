@@ -1,8 +1,8 @@
 const { Live2DRenderer } = require("./renderer");
 const { loadModelBuffer } = require("./model");
 const TEXTURES = [
-  "/assets/live2d/hiyori/texture_00.png",
-  "/assets/live2d/hiyori/texture_01.png",
+  "/assets/live2d/hiyori/texture_00-512.png",
+  "/assets/live2d/hiyori/texture_01-512.png",
 ];
 
 Component({
@@ -10,6 +10,7 @@ Component({
     active: { type: Boolean, value: true, observer: "onActiveChange" },
     state: { type: String, value: "idle", observer: "onStateChange" },
     speaking: { type: Boolean, value: false, observer: "onSpeakingChange" },
+    model: { type: Object, value: null, observer: "onModelChange" },
   },
 
   data: {
@@ -20,9 +21,11 @@ Component({
 
   lifetimes: {
     ready() {
+      this._ready = true;
       this.initialize();
     },
     detached() {
+      this._ready = false;
       this.dispose();
     },
   },
@@ -46,7 +49,9 @@ Component({
       this.setData({ status: "loading", statusText: "正在加载互动形象" });
       try {
         const result = await new Promise((resolve, reject) => {
+          const timeout = setTimeout(() => reject(new Error("WebGL 画布初始化超时")), 8000);
           this.createSelectorQuery().select("#live2d-canvas").fields({ node: true, size: true }).exec((items) => {
+            clearTimeout(timeout);
             const item = items && items[0];
             if (item && item.node && item.width && item.height) resolve(item);
             else reject(new Error("无法创建 WebGL 画布"));
@@ -66,14 +71,20 @@ Component({
           stencil: true,
         });
         if (!gl) throw new Error("当前设备不支持 WebGL");
-        const modelBuffer = loadModelBuffer();
+        const selected = this.properties.model;
+        const modelBuffer = selected && selected.modelPath
+          ? await new Promise((resolve, reject) => wx.getFileSystemManager().readFile({
+            filePath: selected.modelPath, success: (file) => resolve(file.data), fail: reject,
+          }))
+          : loadModelBuffer();
         if (this._initializing !== attempt) return;
         this._canvas = canvas;
         const renderer = new Live2DRenderer({
           canvas,
           gl,
           modelBuffer,
-          textureSources: TEXTURES,
+          textureSources: selected && selected.modelPath ? selected.texturePaths : TEXTURES,
+          poseGroups: selected && selected.modelPath ? [] : [["PartArmA", "PartArmB"]],
           width: canvas.width,
           height: canvas.height,
         });
@@ -122,6 +133,14 @@ Component({
 
     onSpeakingChange(speaking) {
       if (this._renderer) this._renderer.setSpeaking(speaking);
+    },
+
+    onModelChange(model, previous) {
+      if (!this._ready) return;
+      const identity = (value) => value && value.modelPath || "hiyori";
+      if (identity(model) === identity(previous)) return;
+      this.dispose();
+      this.initialize();
     },
 
     onTouch(event) {

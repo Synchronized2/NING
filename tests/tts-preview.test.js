@@ -55,11 +55,12 @@ const flush = () => new Promise((resolve) => setImmediate(resolve));
 
 test("preview uses unsaved voice and prosody without a model URL or API key and confirms real playback", async () => {
   const h = harness();
-  Object.assign(h.page.data, { ttsVoice: "zh-CN-YunxiNeural", ttsRate: 20, ttsVolume: -10, ttsPitch: 5 });
+  Object.assign(h.page.data, { ttsVoice: "zh-CN-YunxiNeural", ttsStyle: "chat", ttsRate: 20, ttsVolume: -10, ttsPitch: 5 });
   const pending = h.page.previewTtsVoice();
   assert.equal(h.page.data.ttsPreviewState, "preparing");
   const options = h.requests[0].options;
   assert.equal(options.voice, "zh-CN-YunxiNeural");
+  assert.equal(options.style, "chat");
   assert.equal(options.rate, 20);
   assert.equal(options.volume, -10);
   assert.equal(options.pitch, 5);
@@ -81,6 +82,19 @@ test("preview uses unsaved voice and prosody without a model URL or API key and 
   assert.deepEqual(h.deleted, ["cloud://tts/preview.mp3"]);
   assert.deepEqual(h.unlinked, ["wxfile://preview.mp3"]);
   assert.equal(h.audios[0].destroyed, true);
+});
+
+test("popular Chinese voices follow the supplied order and style selection updates the page", () => {
+  const h = harness();
+  assert.deepEqual(Array.from(h.page.data.ttsVoices.slice(0, 3), (item) => item.shortName), [
+    "zh-CN-XiaoxiaoNeural", "zh-CN-YunxiNeural", "zh-CN-YunyangNeural",
+  ]);
+  assert.match(h.page.data.ttsVoiceNames[0], /晓晓 Xiaoxiao \(女声·温柔\)/);
+  h.page.selectTtsStyle({ detail: { value: "2" } });
+  assert.equal(h.page.data.ttsStyle, "chat");
+  h.page.selectTtsVoice({ detail: { value: "1" } });
+  assert.equal(h.page.data.ttsVoice, "zh-CN-YunxiNeural");
+  assert.equal(h.page.data.ttsStyle, "general");
 });
 
 test("stopping a pending download ignores late audio and cleans up both files", async () => {

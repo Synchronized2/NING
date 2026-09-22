@@ -381,6 +381,7 @@ async function handleTts(event, context) {
   const text = requireText(event.text, "朗读文本", 5000);
   const voice = requireText(event.voice || "zh-CN-XiaoxiaoNeural", "TTS 人声", 100);
   if (!/^[a-z]{2,3}(?:-[a-zA-Z0-9]+){2,4}Neural$/.test(voice)) throw new ProxyError("TTS 人声名称无效。");
+  if (event.style && !/^(general|assistant|chat|customerservice|newscast|affectionate|calm|cheerful|gentle|lyrical|serious)$/.test(event.style)) throw new ProxyError("TTS 语音风格无效。");
   const audio = await synthesizeEdge(text, voice, event);
   if (!audio.length || audio.length > MAX_INPUT_MEDIA_BYTES) throw new ProxyError("TTS 音频为空或超过 10 MB 限制。");
   const owner = String(context.OPENID || "anonymous").replace(/[^a-zA-Z0-9_-]/g, "").slice(0, 64) || "anonymous";

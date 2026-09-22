@@ -798,8 +798,8 @@ function listTtsVoices() {
   };
 }
 
-function synthesizeSpeech({ text, voice, rate = 0, volume = 0, pitch = 0 }) {
-  const operation = callCloudProxy("tts", { text, voice, rate, volume, pitch });
+function synthesizeSpeech({ text, voice, style = "general", rate = 0, volume = 0, pitch = 0 }) {
+  const operation = callCloudProxy("tts", { text, voice, style, rate, volume, pitch });
   return {
     abort: operation.abort,
     promise: operation.promise.then((response) => {

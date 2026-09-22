@@ -153,12 +153,13 @@ test("a stale synthesis failure does not clear current playback or show an error
 
 test("interactive speech shows only the sentence currently being played", async () => {
   const h = harness();
-  const session = h.page.startInteractiveSpeech({});
+  const session = h.page.startInteractiveSpeech({ ttsStyle: "cheerful" });
   h.page.queueInteractiveSpeech(session, "孙悟空是《西游记》中的重要人物之一");
   assert.equal(h.requests.length, 0);
   h.page.queueInteractiveSpeech(session, "。他有七十二变和筋斗云，总能化险为夷！后来一路护送唐僧西行取经，最终被封为斗战胜佛");
   h.page.finishInteractiveSpeech(session, "");
   assert.equal(h.requests.length, 3);
+  assert.equal(h.requests[0].options.style, "cheerful");
   assert.equal(h.page.data.stageDisplayText, "正在思考…");
   assert.equal(h.page.data.stageAnswerVisible, false);
 
